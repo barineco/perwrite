@@ -1,0 +1,14 @@
+src/
+tests/
+node_modules/
+.git/
+.vscode/
+tsconfig.json
+vitest.config.ts
+esbuild.config.mjs
+pnpm-lock.yaml
+pnpm-workspace.yaml
+**/*.map
+*.log
+.gitignore
+perwrite-theme-source-*.vsix

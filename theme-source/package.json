@@ -1,0 +1,47 @@
+{
+  "name": "perwrite-theme-source",
+  "displayName": "Perwrite Theme Source",
+  "description": "Resolves token colors from the active UI-side VS Code theme.",
+  "version": "0.0.3",
+  "publisher": "barineco",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/barineco/perwrite.git",
+    "directory": "theme-source"
+  },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "api": "none",
+  "activationEvents": [
+    "onCommand:_perwrite.resolveActiveTokenTheme"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "_perwrite.resolveActiveTokenTheme",
+        "title": "Resolve Active Token Theme"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "_perwrite.resolveActiveTokenTheme",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "node esbuild.config.mjs --production && pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

@@ -21,8 +21,14 @@ const comparison: ResolvedGitComparison = {
 
 const root = document.getElementById('editor')!
 let rendering: RenderingProfile = { generation: 0, codeBlockWrap: true, mermaidLayout: 'elk', mermaidMaxEdges: 1024, mermaidPanStep: 80, mermaidZoomStep: 1.5, texRendering: true }
-const state = new ComparisonEditorState(root, comparison, 'render', rendering, { onEdit() {} })
+const activations: Array<{ readonly documentId: string; readonly destination: string }> = []
+const state = new ComparisonEditorState(root, comparison, 'render', rendering, {
+  onEdit() {},
+  onLinkActivate(documentId, destination) {
+    activations.push({ documentId, destination })
+  },
+})
 for (const mode of ['raw', 'rich', 'render'] as const) document.getElementById(`mode-${mode}`)!.addEventListener('click', () => state.setMode(mode))
 document.getElementById('tex-off')!.addEventListener('click', () => { rendering = { ...rendering, texRendering: false }; state.reconfigureRendering(rendering) })
 for (const layout of ['elk', 'dagre'] as const) document.getElementById(`layout-${layout}`)!.addEventListener('click', () => { rendering = { ...rendering, mermaidLayout: layout }; state.reconfigureRendering(rendering) })
-Object.assign(globalThis, { comparisonScenario: state, comparisonSnapshot: snapshot })
+Object.assign(globalThis, { comparisonScenario: state, comparisonSnapshot: snapshot, comparisonActivations: activations })

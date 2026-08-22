@@ -1,16 +1,23 @@
 import { EditorState } from '@codemirror/state'
 import { RangeSet } from '@codemirror/state'
 import { Decoration } from '@codemirror/view'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { GFM } from '@lezer/markdown'
-import { mathExtension } from '../webview/editor/markdown-math-extension'
-import { wikilinkExtension } from '../webview/editor/markdown-wikilink-extension'
-import { frontmatterExtension } from '../webview/editor/markdown-frontmatter-extension'
 import { editorFocused, irDecorationField } from '../webview/editor/ir-state-field'
+import { completeMarkdownTreeField, initialCompleteMarkdownTree, markdownLezerParser, renderingProfileExtensions } from '../webview/editor/rendering-profile'
 import { initialViewMode, viewModeField, type ViewMode } from '../webview/editor/view-mode'
+import type { RenderingProfile } from '../src/protocol'
 import { compositionActiveField } from '../webview/editor/composition-state'
 import { irTransactionFilter } from '../webview/editor/ir-transaction-filter'
 import { history } from '@codemirror/commands'
+
+const defaultRenderingProfile: RenderingProfile = {
+  generation: 0,
+  codeBlockWrap: true,
+  mermaidLayout: 'elk',
+  mermaidMaxEdges: 1024,
+  mermaidPanStep: 80,
+  mermaidZoomStep: 1.5,
+  texRendering: true,
+}
 
 // 製品と同じ markdown 拡張構成で編集状態を構築する。装飾フィールドとその依存を含み、
 // DOM を要さない状態レベルの検査に用いる。初期モードは既定 render 、引数で切り替える。
@@ -18,10 +25,9 @@ export function makeState(doc: string, mode: ViewMode = 'render'): EditorState {
   return EditorState.create({
     doc,
     extensions: [
-      markdown({
-        base: markdownLanguage,
-        extensions: [GFM, ...mathExtension, ...wikilinkExtension, ...frontmatterExtension],
-      }),
+      renderingProfileExtensions(defaultRenderingProfile),
+      initialCompleteMarkdownTree.of(markdownLezerParser(defaultRenderingProfile).parse(doc)),
+      completeMarkdownTreeField,
       history(),
       editorFocused,
       initialViewMode.of(mode),

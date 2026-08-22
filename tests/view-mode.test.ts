@@ -1,23 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import { EditorSelection, EditorState } from '@codemirror/state'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { GFM } from '@lezer/markdown'
-import { mathExtension } from '../webview/editor/markdown-math-extension'
-import { wikilinkExtension } from '../webview/editor/markdown-wikilink-extension'
-import { frontmatterExtension } from '../webview/editor/markdown-frontmatter-extension'
 import { decorationOptionsOf } from '../webview/editor/decoration-options'
-import { buildIrPresentation, editorFocused, irDecorationField, setEditorFocusedEffect } from '../webview/editor/ir-state-field'
+import { buildIrPresentation, editorFocused, getLastDecorationDiagnostic, irDecorationField, setEditorFocusedEffect } from '../webview/editor/ir-state-field'
 import { irTransactionFilter } from '../webview/editor/ir-transaction-filter'
+import { completeMarkdownTreeField, initialCompleteMarkdownTree, markdownLezerParser, renderingProfileExtensions } from '../webview/editor/rendering-profile'
+import type { RenderingProfile } from '../src/protocol'
 import {
   cycleViewMode, currentProfile, initialViewMode, profileFor, setViewModeEffect,
   viewModeField, viewModeProfiles, type ViewMode,
 } from '../webview/editor/view-mode'
 
+const renderingProfile: RenderingProfile = {
+  generation: 0,
+  codeBlockWrap: true,
+  mermaidLayout: 'elk',
+  mermaidMaxEdges: 1024,
+  mermaidPanStep: 80,
+  mermaidZoomStep: 1.5,
+  texRendering: true,
+}
+
 function makeModeState(doc: string, mode: ViewMode): EditorState {
   return EditorState.create({
     doc,
     extensions: [
-      markdown({ base: markdownLanguage, extensions: [GFM, ...mathExtension, ...wikilinkExtension, ...frontmatterExtension] }),
+      renderingProfileExtensions(renderingProfile),
+      initialCompleteMarkdownTree.of(markdownLezerParser(renderingProfile).parse(doc)),
+      completeMarkdownTreeField,
       EditorState.allowMultipleSelections.of(true),
       editorFocused,
       initialViewMode.of(mode),
@@ -75,10 +84,30 @@ describe('表示プロファイルの正規形', () => {
 })
 
 describe('raw と rich', () => {
-  it('raw は装飾と atomic 範囲を構築しない', () => {
-    const state = makeModeState('# title\n\na *hi* `code` b', 'raw')
+  it('raw は構文を含む原文を保存し、装飾、atomic 範囲、診断を構築しない', () => {
+    const doc = [
+      '---',
+      'title: Raw source',
+      '---',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  A --> B',
+      '```',
+      '',
+      '| label | value |',
+      '| --- | --- |',
+      '| `code` | [link](target.md) |',
+      '',
+      '$$\\int_0^1 x^2 dx$$',
+      '',
+      '[[raw-source]]',
+    ].join('\n')
+    const state = makeModeState(doc, 'raw')
+    expect(state.doc.toString()).toBe(doc)
     expect(decorationSignature(state)).toEqual([])
     expect(atomicCount(state)).toBe(0)
+    expect(getLastDecorationDiagnostic()).toEqual({ visitedRanges: [], rebuiltWidgetKeys: [], preservedWidgetKeys: [] })
   })
 
   it('rich は記法を含む原文を保存して非置換 style だけを構築する', () => {

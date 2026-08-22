@@ -6,6 +6,7 @@ import {
   invalidateMeasuredHeightCacheOnAppearanceChange,
   lookupMeasuredHeight,
   recordMeasuredHeight,
+  tableMeasuredHeightCacheKey,
   widthBucketPolicyFor,
   type AppearanceState,
   type CacheKey,
@@ -109,12 +110,28 @@ describe('widget-height-cache', () => {
     )
   })
 
-  it('builds WidthDependent buckets for Mermaid and CodeBlock, WidthIndependent for KaTeX and Table', () => {
+  it('builds WidthDependent buckets for Mermaid, CodeBlock, and Table', () => {
     expect(widthBucketPolicyFor('Mermaid', 130)).toEqual({ kind: 'WidthDependent', bucket: 2 })
     expect(widthBucketPolicyFor('CodeBlock', 63)).toEqual({ kind: 'WidthDependent', bucket: 0 })
     expect(widthBucketPolicyFor('CodeBlock', 64)).toEqual({ kind: 'WidthDependent', bucket: 1 })
     expect(widthBucketPolicyFor('KaTeX')).toEqual({ kind: 'WidthIndependent' })
-    expect(widthBucketPolicyFor('Table', 999)).toEqual({ kind: 'WidthIndependent' })
+    expect(widthBucketPolicyFor('Table', 808)).toEqual({ kind: 'WidthDependent', bucket: 12 })
+    expect(widthBucketPolicyFor('Table', 316)).toEqual({ kind: 'WidthDependent', bucket: 4 })
+  })
+
+  it('keeps table measured heights separate by width bucket and appearance version', () => {
+    const tableData = { from: 0, to: 29, rows: [{ header: true, cells: [] }, { header: false, cells: [] }] }
+    const wide = tableMeasuredHeightCacheKey(tableData, 808)
+    const narrow = tableMeasuredHeightCacheKey(tableData, 316)
+
+    expect(wide.contentIdentity).toEqual(narrow.contentIdentity)
+    expect(wide.appearanceVersion).toBe(narrow.appearanceVersion)
+    expect(wide.widthBucket).toEqual({ kind: 'WidthDependent', bucket: 12 })
+    expect(narrow.widthBucket).toEqual({ kind: 'WidthDependent', bucket: 4 })
+    expect(recordMeasuredHeight({ cacheKey: wide, measuredHeightPx: 120 })).toEqual({ ok: true, value: { cacheKey: wide } })
+    expect(recordMeasuredHeight({ cacheKey: narrow, measuredHeightPx: 76 })).toEqual({ ok: true, value: { cacheKey: narrow } })
+    expect(lookupMeasuredHeight(wide)).toEqual({ kind: 'Hit', value: 120 })
+    expect(lookupMeasuredHeight(narrow)).toEqual({ kind: 'Hit', value: 76 })
   })
 
   it('exposes a shared evaluateEstimatedHeight entry for all four kinds', () => {

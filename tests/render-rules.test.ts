@@ -119,6 +119,7 @@ function signature(state: ReturnType<typeof makeState>) {
 describe('rich と render の全構文導出', () => {
   for (const example of cases) {
     it(`${example.node} の原文 style と render 開示を同じ範囲から導出する`, () => {
+      const isTable = example.node === 'Table'
       const rich = makeState(example.doc, 'rich')
       let nodeRange: { from: number; to: number } | null = null
       syntaxTree(rich).iterate({
@@ -129,24 +130,42 @@ describe('rich と render の全構文導出', () => {
       expect(nodeRange, example.node).not.toBeNull()
       const range = nodeRange!
       expect(rich.doc.toString()).toBe(example.doc)
-      expect(signature(rich).some(item => item.className?.includes(richClass[example.node]))).toBe(true)
-      if (!['ATXHeading', 'HorizontalRule', 'QuoteMark', 'FencedCode', 'BlockMath', 'Table']
-        .some(prefix => example.node.startsWith(prefix))) {
-        expect(signature(rich)).toContainEqual(expect.objectContaining({
-          from: range.from, to: range.to, className: richClass[example.node], widget: false,
-        }))
+      const richSignature = signature(rich)
+      if (isTable) {
+        expect(richSignature.some(item => item.widget)).toBe(true)
+        expect(richSignature.some(item => item.className?.includes('cm-table-'))).toBe(false)
+      } else {
+        expect(richSignature.some(item => item.className?.includes(richClass[example.node]))).toBe(true)
+        if (!['ATXHeading', 'HorizontalRule', 'QuoteMark', 'FencedCode', 'BlockMath']
+          .some(prefix => example.node.startsWith(prefix))) {
+          expect(richSignature).toContainEqual(expect.objectContaining({
+            from: range.from, to: range.to, className: richClass[example.node], widget: false,
+          }))
+        }
+        expect(richSignature.every(item => !item.widget)).toBe(true)
       }
-      expect(signature(rich).every(item => !item.widget)).toBe(true)
       expect(atomicRangesOf(rich).size).toBe(0)
 
-      const active = makeState(example.doc, 'render').update({
+      const selectedRich = makeState(example.doc, 'rich').update({
         effects: setEditorFocusedEffect.of(true),
         selection: { anchor: example.innerPos },
       }).state
-      expect(active.doc.toString()).toBe(example.doc)
-      expect(signature(active).some(item => item.className?.includes(richClass[example.node]))).toBe(true)
-      expect(signature(active).every(item => !item.widget)).toBe(true)
-      expect(atomicRangesOf(active).size).toBe(0)
+      const selectedRender = makeState(example.doc, 'render').update({
+        effects: setEditorFocusedEffect.of(true),
+        selection: { anchor: example.innerPos },
+      }).state
+      for (const selected of [selectedRich, selectedRender]) {
+        expect(selected.doc.toString()).toBe(example.doc)
+        const selectedSignature = signature(selected)
+        if (isTable) {
+          expect(selectedSignature.every(item => !item.widget)).toBe(true)
+          expect(atomicRangesOf(selected).size).toBe(0)
+        } else {
+          expect(selectedSignature.some(item => item.className?.includes(richClass[example.node]))).toBe(true)
+          expect(selectedSignature.every(item => !item.widget)).toBe(true)
+          expect(atomicRangesOf(selected).size).toBe(0)
+        }
+      }
     })
   }
 })

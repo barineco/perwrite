@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.33
+
+- Completes Markdown parsing before deriving rich tables in long documents
+- Presents Raw documents as source text with empty decorations, atomic ranges, and widgets
+- Verifies rich table and Raw behavior from installed Perwrite and theme VSIX packages
+
 ## 0.0.31
 
 - Keeps a code block highlighted when another block loads a new language, instead of failing with a stale request error

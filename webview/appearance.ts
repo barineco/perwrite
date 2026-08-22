@@ -62,7 +62,12 @@ export function resolutionFailureDisplay(resolution: AppearanceResolution): Appe
 }
 
 const defaultMetrics: AppearanceMetrics = {
+  editorWidthPx: 960,
+  contentPaddingPx: 24,
+  gutterGapPx: 24,
   fontSizePx: 14,
+  editorContentWidthPx: 864,
+  logicalColumnWidthPx: 14,
   lineHeightMultiplier: 2,
   lineHeightPx: 28,
   blockPaddingPx: 16,
@@ -93,6 +98,7 @@ export interface AppearanceAdapter {
   publishShikiTheme(candidate: unknown, isCurrent?: () => boolean): boolean
   applyMermaidTheme(themeKind: string): void
   applyMetrics(metrics: AppearanceMetrics, version: number): void
+  invalidateEditorAppearances(): void
   beginFontResourcePreparation(): number
   invalidateWidgets(): void
   showFailure(display: AppearanceFailureDisplay | null): void
@@ -150,6 +156,7 @@ export async function applyAppearanceResolution(
   adapter.applyCssVariables(profile.cssVariables)
   adapter.applyMermaidTheme(profile.themeKind)
   adapter.applyMetrics(profile.metrics, profile.version)
+  adapter.invalidateEditorAppearances()
   adapter.beginFontResourcePreparation()
   adapter.invalidateWidgets()
   adapter.showFailure(rendererFailure ?? failure)

@@ -1,15 +1,15 @@
 import { StateField, StateEffect, RangeSet, type EditorState, type Range } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view'
-import { syntaxTree } from '@codemirror/language'
+import type { Tree } from '@lezer/common'
 import { ruleFor, type RenderRule } from './render-rules'
 import { currentProfile } from './view-mode'
 import { compositionActiveField } from './composition-state'
+import { completeMarkdownTreeField, setCompleteMarkdownTreeEffect } from './rendering-profile'
 import {
   deriveRichNode,
   interpretDisplay,
   isActiveForRule,
   isRuleActive,
-  pushBlockLines,
   type DeriveContext,
   type NodeInfo,
 } from './ir-display-derivation'
@@ -96,39 +96,20 @@ export function buildIrPresentation(
   state: EditorState,
   lookup: (node: string) => RenderRule | undefined = ruleFor,
   impact?: DecorationDiagnosticRange,
+  completeTree?: Tree,
 ): IrPresentation & { readonly diagnostic: DecorationDiagnostic } {
   const profile = currentProfile(state)
   if (profile.presentation === 'raw') {
-    const decorations: Range<Decoration>[] = []
-    const atomicRanges: Range<Decoration>[] = []
-    const context: DeriveContext = {
-      state,
-      decorations,
-      atomicRanges,
-      focused: state.field(editorFocused),
-      activeReveal: false,
-    }
-    syntaxTree(state).iterate({
-      enter(nodeRef) {
-        if (nodeRef.name === 'FencedCode') {
-          pushBlockLines(context, nodeRef.from, nodeRef.to, 'cm-codeblock')
-        }
-      },
-    })
-    const diagnostic = { visitedRanges: [], rebuiltWidgetKeys: [], preservedWidgetKeys: lastDecorationDiagnostic.preservedWidgetKeys }
+    const diagnostic = { visitedRanges: [], rebuiltWidgetKeys: [], preservedWidgetKeys: [] }
     lastDecorationDiagnostic = diagnostic
-    return {
-      decorations: Decoration.set(decorations, true),
-      atomicRanges: RangeSet.of(atomicRanges, true),
-      diagnostic,
-    }
+    return { decorations: Decoration.none, atomicRanges: RangeSet.empty, diagnostic }
   }
 
   const decorations: Range<Decoration>[] = []
   const atomicRanges: Range<Decoration>[] = []
   const visitedRanges: DecorationDiagnosticRange[] = []
   const rebuiltWidgetKeys: string[] = []
-  const tree = syntaxTree(state)
+  const tree = completeTree ?? state.field(completeMarkdownTreeField)
   const focused = state.field(editorFocused)
   const activeReveal = profile.presentation === 'render'
 
@@ -154,11 +135,20 @@ export function buildIrPresentation(
       const rule = lookup(nodeRef.name)
       if (!rule) return
       const node = { name: nodeRef.name, from: nodeRef.from, to: nodeRef.to, node: nodeRef.node }
+      const data = nodeRenderData.get(nodeRef.name)
+      if (node.name === 'Table' && data) {
+        const tableContext: DeriveContext = {
+          ...ctx,
+          activeReveal: profile.presentation === 'rich' || activeReveal,
+        }
+        if (rule.display === 'widget') rebuiltWidgetKeys.push(widgetKey(state, node))
+        interpretDisplay(tableContext, node, rule, data)
+        return
+      }
       if (profile.presentation === 'rich' || isRuleActive(ctx, node, rule)) {
         deriveRichNode(ctx, node)
         return
       }
-      const data = nodeRenderData.get(nodeRef.name)
       if (!data) return
       if (rule.display === 'widget') rebuiltWidgetKeys.push(widgetKey(state, node))
       interpretDisplay(ctx, node, rule, data)
@@ -239,6 +229,10 @@ export const irDecorationField = StateField.define<IrPresentation>({
         atomicRanges: value.atomicRanges.map(tr.changes),
       }
     }
+    if (tr.effects.some(effect => effect.is(setCompleteMarkdownTreeEffect))) {
+      const rebuilt = buildIrPresentation(tr.state)
+      return { decorations: rebuilt.decorations, atomicRanges: rebuilt.atomicRanges }
+    }
 
     if (!tr.docChanged && tr.isUserEvent('select.pointer')) {
       return value
@@ -270,8 +264,9 @@ export const irDecorationField = StateField.define<IrPresentation>({
 })
 
 /**
- * Forces a decoration rebuild on the next frame after mouseup. The
- * select.pointer skip above means clicking doesn't immediately reveal syntax.
+ * mouseup handler to trigger decoration rebuild after click settles.
+ * The select.pointer skip above means clicking doesn't immediately reveal syntax.
+ * This handler forces a rebuild on the next frame after mouseup.
  */
 export const irMouseUpHandler = EditorView.domEventHandlers({
   mouseup(_event, view) {
@@ -281,4 +276,3 @@ export const irMouseUpHandler = EditorView.domEventHandlers({
     return false
   },
 })
-

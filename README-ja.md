@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Perwrite は、VS Code と互換エディタ向けの Markdown エディタ拡張です。同じ編集面で Markdown を編集しながら、リッチな描画を確認できます。
+Perwrite は、VS Code と互換エディタ向けの Markdown エディタ拡張です。一つのエディタで Markdown を入力しながら、リッチな描画を確認できます。
 
 次の内容を描画します。
 
@@ -17,15 +17,18 @@ Perwrite は、VS Code と互換エディタ向けの Markdown エディタ拡�
 ## 利用方法
 
 1. VS Code または互換エディタへの Perwrite のインストール
-2. Markdown ファイルの表示
+2. Markdown ファイルを開く
 3. 右上のボタンによる表示モードの切り替え
-4. [`docs/perwrite-showcase.md`](./docs/perwrite-showcase.md) による対応構造の確認
+
+表示モードは次の三つです。
 
 ```text
 raw
 rich
 render
 ```
+
+[`docs/perwrite-showcase.md`](./docs/perwrite-showcase.md) では、対応する Markdown 構造と各表示モードの結果を一つの文書で確認できます。
 
 ## 対応環境
 
@@ -57,6 +60,11 @@ KaTeX が数式として解釈できない入力は置換せず、Markdown の�
 - Mermaid
 - KaTeX
 - 表
+
+## 文書
+
+- [文書の索引](./docs/ja/INDEX.md)
+- [編集を支える仕組み](./docs/ja/architecture/overview.md)
 
 ## 開発
 

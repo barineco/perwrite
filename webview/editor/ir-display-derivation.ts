@@ -11,6 +11,7 @@ import { revealRangeFacet } from './search-reveal'
 import { ImageStatusWidget, ImageWidget, imageDocumentGeneration, prepareImage } from './image-widget'
 import { CheckboxWidget, ListBulletWidget, ListNumberWidget } from './list-widget'
 import { SourceTextWidget } from './widget-adapters'
+import { linkActivation } from './link-activation'
 import { extractTableCells, TableWidget } from './table-widget'
 import { renderingProfileField } from './rendering-profile'
 import { resolveFencedCodeWidget } from './ir-fenced-code-registry'
@@ -108,10 +109,14 @@ export const deriveLink: NodeDeriver = (ctx, node, rule) => {
   const visible = linkLabelRange(node.node)
   if (visible) {
     commitRange(ctx, hideDecoration().range(node.from, node.from + 1), rule.cursorPassThrough)
-    commitRange(ctx, markDecoration('cm-link').range(
-        visible.from,
-        visible.to,
-      ), rule.cursorPassThrough)
+    commitRange(ctx, Decoration.mark({
+      class: 'cm-link',
+      tagName: 'a',
+      attributes: { href: linkDestination(ctx.state, node.node) ?? '' },
+    }).range(
+      visible.from,
+      visible.to,
+    ), rule.cursorPassThrough)
     commitRange(ctx, hideDecoration().range(visible.to, node.to), rule.cursorPassThrough)
   }
 }
@@ -175,19 +180,6 @@ export function pushBlockLines(ctx: DeriveContext, from: number, to: number, bas
   }
 }
 
-function pushRichTableRanges(ctx: DeriveContext, node: SyntaxNode): void {
-  let child = node.firstChild
-  while (child) {
-    if (child.name === 'TableCell') {
-      ctx.decorations.push(markDecoration('cm-table-source-cell').range(child.from, child.to))
-    } else if (child.name === 'TableDelimiter') {
-      ctx.decorations.push(markDecoration('cm-table-source-delimiter').range(child.from, child.to))
-    }
-    pushRichTableRanges(ctx, child)
-    child = child.nextSibling
-  }
-}
-
 export function deriveRichNode(ctx: DeriveContext, node: NodeInfo): void {
   const inlineClass: Readonly<Record<string, string>> = {
     Emphasis: 'cm-em',
@@ -225,11 +217,6 @@ export function deriveRichNode(ctx: DeriveContext, node: NodeInfo): void {
   }
   if (node.name === 'BlockMath') {
     pushBlockLines(ctx, node.from, node.to, 'cm-mathblock')
-    return
-  }
-  if (node.name === 'Table') {
-    pushBlockLines(ctx, node.from, node.to, 'cm-table')
-    pushRichTableRanges(ctx, node.node)
   }
 }
 
@@ -338,14 +325,13 @@ export const deriveListMark: NodeDeriver = (ctx, node, rule) => {
 }
 
 export const deriveTable: NodeDeriver = (ctx, node, rule) => {
-  if (isRuleActive(ctx, node, rule)) {
-    pushBlockLines(ctx, node.from, node.to, 'cm-table')
-    return
-  }
+  if (isRuleActive(ctx, node, rule)) return
   commitRange(ctx, Decoration.replace({
     widget: new TableWidget(
       extractTableCells(ctx.state, node.node),
       ctx.state.field(imageDocumentGeneration, false) ?? 0,
+      undefined,
+      ctx.state.facet(linkActivation),
     ),
     block: true,
   }).range(node.from, node.to), rule.cursorPassThrough)
@@ -369,5 +355,3 @@ export function interpretDisplay(ctx: DeriveContext, node: NodeInfo, rule: Rende
     commitRange(ctx, hideDecoration().range(node.from, node.to), rule.cursorPassThrough)
   }
 }
-
-

@@ -1,9 +1,15 @@
 import { syntaxTree } from '@codemirror/language'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { decorationOptionsOf } from '../webview/editor/decoration-options'
 import { irDecorationField, setEditorFocusedEffect } from '../webview/editor/ir-state-field'
 import { extractTableCells, serializeTableData, TableWidget, type TableInline } from '../webview/editor/table-widget'
+import { applyMetrics } from '../webview/appearance'
 import { applyTableDomNode, type TableDomAdapter } from '../webview/editor/widget-adapters'
+import {
+  recordMeasuredHeight,
+  tableMeasuredHeightCacheKey,
+} from '../webview/widget-height-cache'
+import { createFallbackProfile } from '../src/appearance-profile'
 import { makeState } from './helpers'
 
 function classes(state: ReturnType<typeof makeState>): string[] {
@@ -26,33 +32,10 @@ function kinds(parts: readonly TableInline[]): string[] {
 }
 
 describe('GFM Table の Lezer 構文木による描画', () => {
-  it('rich は区切り行と全 cell の原文を保存して非置換 style を構築する', () => {
-    const source = [
-      '| Left | Right | Empty |',
-      '|:---|---:|:---:|',
-      '| escaped \\| pipe | *value* | |',
-    ].join('\n')
-    const rich = makeState(source, 'rich')
-    const richClasses = classes(rich)
-
-    expect(rich.doc.toString()).toBe(source)
-    expect(rich.doc.lines).toBe(3)
-    expect(richClasses.filter(value => value.includes('cm-table-line'))).toHaveLength(3)
-    expect(richClasses).toContain('cm-table-source-cell')
-    expect(richClasses).toContain('cm-table-source-delimiter')
-
-    const changed = rich.update({
-      changes: { from: source.length, insert: '\n| new | row | cell |' },
-    }).state
-    const table = syntaxTree(changed).topNode.getChild('Table')
-    expect(extractTableCells(changed, table!).rows).toHaveLength(3)
-  })
-
-  it('render は Table 範囲を widget にし、block 開示中の編集後に同じ範囲を再描画する', () => {
+  it('rich と render は非アクティブ Table を同じ TableWidget として導出する', () => {
     const tableSource = ['| A | B |', '|---|---|', '| 1 | 2 |'].join('\n')
     const source = `${tableSource}\n\noutside`
-    const base = makeState(source, 'render')
-    const widgetNames = (state: typeof base) => {
+    const widgetNames = (state: ReturnType<typeof makeState>) => {
       const names: string[] = []
       const iterator = state.field(irDecorationField).decorations.iter()
       while (iterator.value) {
@@ -63,19 +46,33 @@ describe('GFM Table の Lezer 構文木による描画', () => {
       return names
     }
 
-    expect(widgetNames(base)).toContain('TableWidget')
-    const opened = base.update({
-      effects: setEditorFocusedEffect.of(true), selection: { anchor: tableSource.indexOf('1') },
-    }).state
-    expect(widgetNames(opened)).not.toContain('TableWidget')
-    expect(classes(opened).some(value => value.includes('cm-table-line'))).toBe(true)
+    const rich = makeState(source, 'rich')
+    const render = makeState(source, 'render')
+    expect(widgetNames(rich)).toContain('TableWidget')
+    expect(widgetNames(render)).toContain('TableWidget')
+    expect(rich.doc.toString()).toBe(source)
+    expect(render.doc.toString()).toBe(source)
+  })
 
-    const edited = opened.update({
-      changes: { from: tableSource.indexOf('2'), to: tableSource.indexOf('2') + 1, insert: 'changed' },
-    }).state
-    const moved = edited.update({ selection: { anchor: edited.doc.length } }).state
-    expect(moved.doc.toString()).toContain('| 1 | changed |')
-    expect(widgetNames(moved)).toContain('TableWidget')
+  it('rich と render の Table 内 selection は block 全体の Markdown 原文を開示する', () => {
+    const tableSource = ['| A | B |', '|---|---|', '| 1 | 2 |'].join('\n')
+    const source = `${tableSource}\n\noutside`
+    for (const mode of ['rich', 'render'] as const) {
+      const base = makeState(source, mode)
+      const opened = base.update({
+        effects: setEditorFocusedEffect.of(true), selection: { anchor: tableSource.indexOf('1') },
+      }).state
+      const widgets = opened.field(irDecorationField).decorations.iter()
+      const names: string[] = []
+      while (widgets.value) {
+        const widget = decorationOptionsOf(widgets.value).widget as { constructor?: { name?: string } } | undefined
+        if (widget?.constructor?.name) names.push(widget.constructor.name)
+        widgets.next()
+      }
+      expect(names).not.toContain('TableWidget')
+      expect(opened.doc.toString()).toBe(source)
+      expect(opened.selection.main).toMatchObject({ from: tableSource.indexOf('1'), to: tableSource.indexOf('1') })
+    }
   })
 
   it('行・セルとエスケープ付きパイプを構文木から導出する', () => {
@@ -160,5 +157,107 @@ describe('GFM Table の Lezer 構文木による描画', () => {
     expect(widgetDom.tag).toBe('div')
     expect(widgetDom.children[0].tag).toBe('table')
     expect(widgetDom.children[0].children[1].children[5].children[0].textContent).toBe('img.png:alt:3')
+  })
+
+  it('同一 tableData の各 instance は幅と appearance version に対応する測定高を返す', () => {
+    type FakeElement = {
+      className: string
+      clientWidth: number
+      parentElement: FakeElement | null
+      isConnected: boolean
+      children: Node[]
+      appendChild(child: Node): Node
+      getBoundingClientRect(): DOMRect
+      setAttribute(): void
+    }
+    const tableData = {
+      from: 0,
+      to: 29,
+      rows: [{ header: true, cells: [] }, { header: false, cells: [] }],
+    }
+    const profileFor = (version: number) => createFallbackProfile('dark', {}, version)
+    const applyProfile = (version: number) => {
+      const profile = profileFor(version)
+      applyMetrics(profile.metrics, profile.version)
+      return profile
+    }
+    const createFixture = (widths: readonly number[], heights: readonly number[]) => {
+      const callbacks: ResizeObserverCallback[] = []
+      class FixtureResizeObserver {
+        constructor(callback: ResizeObserverCallback) { callbacks.push(callback) }
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+      vi.stubGlobal('ResizeObserver', FixtureResizeObserver)
+      const element = (width = 0, height = 0): FakeElement => {
+        const node: FakeElement = {
+          className: '', clientWidth: width, parentElement: null, isConnected: true, children: [],
+          appendChild(child) { node.children.push(child); return child },
+          getBoundingClientRect: () => ({ height } as DOMRect),
+          setAttribute() {},
+        }
+        return node
+      }
+      let wrapperIndex = 0
+      const adapter: TableDomAdapter = {
+        createTextNode(text) { return text as unknown as Node },
+        createElement(tag) {
+          return tag === 'div'
+            ? element(widths[wrapperIndex], heights[wrapperIndex++]) as unknown as HTMLElement
+            : element() as unknown as HTMLElement
+        },
+        createMathNode(source) { return source as unknown as Node },
+        createImageNode(source) { return source as unknown as Node },
+      }
+      const wide = new TableWidget(tableData, 0, adapter)
+      const narrow = new TableWidget(tableData, 0, adapter)
+      wide.toDOM()
+      narrow.toDOM()
+      return { callbacks, wide, narrow }
+    }
+
+    for (const [version, callbackOrder] of [[101, [0, 1]], [102, [1, 0]]] as const) {
+      const profile = applyProfile(version)
+      const { callbacks, wide, narrow } = createFixture([808, 316], [120, 76])
+      const expectedFallback = 2 * profile.metrics.tableRowHeightPx + 2 * profile.metrics.tableWidgetBlockPaddingPx
+      expect(callbacks).toHaveLength(2)
+      expect(wide.estimatedHeight).toBe(expectedFallback)
+      expect(narrow.estimatedHeight).toBe(expectedFallback)
+
+      callbacks[callbackOrder[0]]([], {} as ResizeObserver)
+      if (callbackOrder[0] === 0) {
+        expect(wide.estimatedHeight).toBe(120)
+        expect(narrow.estimatedHeight).toBe(expectedFallback)
+      } else {
+        expect(wide.estimatedHeight).toBe(expectedFallback)
+        expect(narrow.estimatedHeight).toBe(76)
+      }
+      callbacks[callbackOrder[1]]([], {} as ResizeObserver)
+      expect(wide.estimatedHeight).toBe(120)
+      expect(narrow.estimatedHeight).toBe(76)
+      expect(tableMeasuredHeightCacheKey(tableData, 808)).toMatchObject({
+        appearanceVersion: version, widthBucket: { kind: 'WidthDependent', bucket: 12 },
+      })
+      expect(tableMeasuredHeightCacheKey(tableData, 316)).toMatchObject({
+        appearanceVersion: version, widthBucket: { kind: 'WidthDependent', bucket: 4 },
+      })
+
+      const nextProfile = applyProfile(version + 1)
+      const wideKey = tableMeasuredHeightCacheKey(tableData, 808)
+      const narrowKey = tableMeasuredHeightCacheKey(tableData, 316)
+      expect(wideKey).toMatchObject({
+        appearanceVersion: version + 1, widthBucket: { kind: 'WidthDependent', bucket: 12 },
+      })
+      expect(narrowKey).toMatchObject({
+        appearanceVersion: version + 1, widthBucket: { kind: 'WidthDependent', bucket: 4 },
+      })
+      expect(recordMeasuredHeight({ cacheKey: wideKey, measuredHeightPx: 130 })).toEqual({ ok: true, value: { cacheKey: wideKey } })
+      expect(recordMeasuredHeight({ cacheKey: narrowKey, measuredHeightPx: 82 })).toEqual({ ok: true, value: { cacheKey: narrowKey } })
+      expect(wide.estimatedHeight).toBe(130)
+      expect(narrow.estimatedHeight).toBe(82)
+      expect(nextProfile.version).toBe(version + 1)
+      vi.unstubAllGlobals()
+    }
   })
 })

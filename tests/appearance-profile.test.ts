@@ -74,7 +74,9 @@ describe('appearance profile', () => {
     if (!original.ok || !changed.ok) return
     const differences = EXPECTED_CSS_VARIABLES.filter(name => original.value.cssVariables[name] !== changed.value.cssVariables[name])
     expect(differences).toEqual(['--perwrite-editor-width'])
-    expect(changed.value.metrics).toEqual(original.value.metrics)
+    expect(changed.value.metrics).toMatchObject({
+      ...original.value.metrics, editorWidthPx: 1200, editorContentWidthPx: 1128,
+    })
   })
 
   it('preserves undeclared CSS destinations for every mutable profile source', () => {
@@ -96,9 +98,15 @@ describe('appearance profile', () => {
       const after = resolveAppearanceProfile(changedInput)
       expect(before.ok && after.ok, source).toBe(true)
       if (!before.ok || !after.ok) continue
-      const expected = appearanceAssignments.filter(item => item.sources.includes(source)).map(item =>
-        `${item.destination.kind}:${item.destination.name}`,
-      ).sort()
+      const expected = [
+        ...appearanceAssignments.filter(item => item.sources.includes(source)).map(item =>
+          `${item.destination.kind}:${item.destination.name}`,
+        ),
+        ...(['perwrite.editorWidth', 'perwrite.contentPadding', 'perwrite.gutterGap'].includes(source)
+          ? ['metric:editorContentWidthPx']
+          : []),
+        ...(source === 'editor.fontSize' ? ['metric:logicalColumnWidthPx'] : []),
+      ].sort()
       const differences = [
         ...EXPECTED_CSS_VARIABLES.filter(name => before.value.cssVariables[name] !== after.value.cssVariables[name]).map(name => `css:${name}`),
         ...Object.keys(before.value.metrics).filter(name =>
@@ -224,6 +232,8 @@ describe('appearance profile', () => {
     expect(resolved.value.cssVariables['--perwrite-editor-width']).toBe('960px')
     expect(resolved.value.metrics).toEqual({
       fontSizePx: 14, lineHeightMultiplier: 2, lineHeightPx: 28,
+      editorWidthPx: 960, contentPaddingPx: 24, gutterGapPx: 24,
+      editorContentWidthPx: 888, logicalColumnWidthPx: 14,
       blockPaddingPx: 16, mathBlockPaddingPx: 8, tableRowHeightPx: 40,
       tableCellBlockPaddingPx: 6, tableCellInlinePaddingPx: 12,
       tableWidgetBlockPaddingPx: 8,

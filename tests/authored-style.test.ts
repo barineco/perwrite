@@ -26,7 +26,13 @@ describe('authored appearance styles', () => {
     expect(source('../webview/editor/block-line-numbers.ts')).not.toContain("'13px'")
     expect(source('../webview/theme/styles.css')).not.toMatch(/font-family:\s*monospace/)
     expect(source('../webview/theme/styles.css')).not.toMatch(/\.cm-table-widget\s*\{[^}]*padding:\s*\d/si)
-    expect(source('../webview/theme/styles.css')).not.toMatch(/\.cm-(?:editor\s+)?(?:th|table-widget th)[^{]*\{[^}]*padding:\s*\d/si)
+    const styles = source('../webview/theme/styles.css')
+    expect(styles).not.toMatch(/\.cm-(?:editor\s+)?(?:th|table-widget th)[^{]*\{[^}]*padding:\s*\d/si)
+    expect(styles).not.toMatch(/\.cm-table-source[^\{]*\{[^}]*padding:/si)
+    expect(styles).not.toMatch(/\.cm-editor\s+\.cm-line\.cm-table-[^{]*\{[^}]*?(?:padding|background|border-radius):/si)
+    expect(styles).toContain('.cm-table-widget {\n  padding: var(--perwrite-table-widget-block-padding) 0;')
+    expect(styles).toContain('.cm-table-widget table {\n  border-collapse: collapse;\n  width: 100%;\n  margin: 0;')
+    expect(styles).toContain('padding: var(--perwrite-table-cell-block-padding) var(--perwrite-table-cell-inline-padding);')
   })
 
   it('draws block ranges through the CodeMirror gutter marker path', () => {

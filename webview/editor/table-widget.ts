@@ -8,12 +8,12 @@ import { applyTableDomNode, browserTableDomAdapter, type TableDomAdapter, type T
 import {
   attachMeasuredHeightObserver,
   buildWidgetStructure,
-  contentDigestTable,
   evaluateEstimatedHeight,
-  widthBucketPolicyFor,
+  tableMeasuredHeightCacheKey,
   type AppearanceState,
   type CacheKey,
 } from '../widget-height-cache'
+import type { LinkActivation } from './link-activation'
 
 const heightObservers = new WeakMap<HTMLElement, ResizeObserver>()
 
@@ -27,15 +27,8 @@ function appearanceState(): AppearanceState {
   }
 }
 
-function tableCacheKey(tableData: TableData): CacheKey {
-  return {
-    contentIdentity: {
-      widgetKind: 'Table',
-      contentDigest: contentDigestTable(tableData),
-    },
-    appearanceVersion: getAppearanceVersion(),
-    widthBucket: widthBucketPolicyFor('Table'),
-  }
+function tableCacheKey(tableData: TableData, availableWidthPx: number): CacheKey {
+  return tableMeasuredHeightCacheKey(tableData, availableWidthPx)
 }
 
 type IterateEnter = NonNullable<Parameters<ReturnType<typeof syntaxTree>['iterate']>[0]['enter']>
@@ -186,14 +179,14 @@ export function serializeTableInline(inline: readonly TableInline[]): TableDomNo
     if (part.kind === 'code') return { tag: 'code', text: part.text, attributes: { class: 'cm-inline-code' } }
     if (part.kind === 'math') return { tag: 'span', mathSource: part.source }
     if (part.kind === 'wikilink') {
-      return { tag: 'a', text: part.label, attributes: { class: 'cm-wikilink', title: part.target } }
+      return { tag: 'a', text: part.label, attributes: { class: 'cm-wikilink', title: part.target, 'data-link-destination': part.target.endsWith('.md') ? part.target : `${part.target}.md` } }
     }
     const tag = part.kind === 'emphasis' ? 'em'
       : part.kind === 'strong' ? 'strong'
         : part.kind === 'strike' ? 'del'
           : 'a'
     const attributes = part.kind === 'link'
-      ? { class: 'cm-link', href: part.url, title: part.url }
+      ? { class: 'cm-link', href: part.url, title: part.url, 'data-link-destination': part.url }
       : undefined
     return { tag, attributes, children: serializeTableInline(part.children) }
   })
@@ -214,16 +207,19 @@ export function serializeTableData(tableData: TableData): TableDomNode {
 
 export class TableWidget extends WidgetType {
   private readonly appearanceVersion = getAppearanceVersion()
+  private availableWidthPx = 0
   constructor(
     readonly tableData: TableData,
     readonly documentGeneration = 0,
     private readonly domAdapter: TableDomAdapter = browserTableDomAdapter,
+    private readonly onLinkActivate: LinkActivation | null = null,
   ) { super() }
 
   eq(other: TableWidget): boolean {
     return JSON.stringify(this.tableData) === JSON.stringify(other.tableData)
       && this.appearanceVersion === other.appearanceVersion
       && this.documentGeneration === other.documentGeneration
+      && this.onLinkActivate === other.onLinkActivate
   }
 
   ignoreEvent(): boolean { return false }
@@ -232,7 +228,19 @@ export class TableWidget extends WidgetType {
     const wrapper = this.domAdapter.createElement('div')
     wrapper.className = 'cm-table-widget'
     wrapper.appendChild(applyTableDomNode(serializeTableData(this.tableData), this.domAdapter, this.documentGeneration))
-    heightObservers.set(wrapper, attachMeasuredHeightObserver(wrapper, () => tableCacheKey(this.tableData)))
+    wrapper.addEventListener?.('click', event => {
+      if (!event.ctrlKey && !event.metaKey) return
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[data-link-destination]')
+      const destination = anchor?.dataset.linkDestination
+      if (!destination || !this.onLinkActivate) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.onLinkActivate(destination)
+    })
+    heightObservers.set(wrapper, attachMeasuredHeightObserver(wrapper, () => {
+      this.availableWidthPx = wrapper.clientWidth || wrapper.parentElement?.clientWidth || 0
+      return tableCacheKey(this.tableData, this.availableWidthPx)
+    }))
     return wrapper
   }
 
@@ -244,7 +252,7 @@ export class TableWidget extends WidgetType {
   get estimatedHeight(): number {
     const appearance = appearanceState()
     return evaluateEstimatedHeight({
-      cacheKey: tableCacheKey(this.tableData),
+      cacheKey: tableCacheKey(this.tableData, this.availableWidthPx),
       staticInput: {
         structure: buildWidgetStructure({ kind: 'Table', rowCount: this.tableData.rows.length }),
         appearance,

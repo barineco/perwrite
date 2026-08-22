@@ -1,3 +1,5 @@
+import { getAppearanceVersion } from './appearance'
+
 export type BlockWidgetKind = 'Mermaid' | 'KaTeX' | 'CodeBlock' | 'Table'
 
 export type WidgetStructure =
@@ -99,6 +101,17 @@ export function contentDigestTable(tableData: unknown): string {
   return `table\0${JSON.stringify(tableData)}`
 }
 
+export function tableMeasuredHeightCacheKey(tableData: unknown, availableWidthPx: number): CacheKey {
+  return {
+    contentIdentity: {
+      widgetKind: 'Table',
+      contentDigest: contentDigestTable(tableData),
+    },
+    appearanceVersion: getAppearanceVersion(),
+    widthBucket: widthBucketPolicyFor('Table', availableWidthPx),
+  }
+}
+
 export function buildWidgetStructure(
   input:
     | { kind: 'Mermaid'; source: string }
@@ -127,7 +140,7 @@ export function widthBucketPolicyFor(
   kind: BlockWidgetKind,
   availableWidthPx?: number,
 ): WidthBucketPolicy {
-  if (kind === 'Mermaid' || kind === 'CodeBlock') {
+  if (kind === 'Mermaid' || kind === 'CodeBlock' || kind === 'Table') {
     const width = Math.max(0, availableWidthPx ?? 0)
     return { kind: 'WidthDependent', bucket: Math.floor(width / WIDTH_BUCKET_QUANTUM_PX) }
   }

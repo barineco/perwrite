@@ -80,8 +80,8 @@ await runBrowserTest({
       applications: globalThis.comparisonScenario.synchronizationCount() - before,
     }
   })
-  check('chunk 内部のスクロールを対応点から一度だけ反対側へ適用する',
-    scroll.right > 0 && scroll.applications === 1 && Math.abs(scroll.right - scroll.heightRatioTarget) > 2, JSON.stringify(scroll))
+  check('通常 scroll の比率を一度だけ反対側へ適用する',
+    scroll.right > 0 && scroll.applications === 1 && Math.abs(scroll.right - scroll.heightRatioTarget) < 2, JSON.stringify(scroll))
 
   const revealSuppression = await page.evaluate(async () => {
     const state = globalThis.comparisonScenario

@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext): void {
       provider,
       {
         webviewOptions: { retainContextWhenHidden: true },
-        supportsMultipleEditorsPerDocument: false,
+        supportsMultipleEditorsPerDocument: true,
       },
     ),
     vscode.commands.registerCommand('perwrite.revealTarget', (...args: unknown[]) => provider.revealTarget(...args)),

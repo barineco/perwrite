@@ -1,6 +1,6 @@
 # Contributing
 
-Perwrite is a VS Code extension written in TypeScript. The editor surface runs in a webview built on CodeMirror 6.
+Perwrite is a VS Code extension written in TypeScript. Its CodeMirror editor runs in a webview.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ The build step also builds the companion theme extension under `theme-source/`.
 
 ## Browser tests
 
-The browser tests drive a real editor surface and take longer than the unit tests.
+The browser tests drive a real CodeMirror editor and take longer than the unit tests.
 
 ```bash
 pnpm test:browser
@@ -71,7 +71,7 @@ pnpm package
 | Path | Contents |
 |---|---|
 | `src/` | extension host: the custom editor provider and message validation |
-| `webview/` | editor surface: setup, rendering rules, and widgets |
+| `webview/` | CodeMirror setup, rendering rules, and widgets |
 | `webview/editor/render-rules.ts` | the declarative table that decides how each node renders |
 | `tests/` | unit tests |
 | `tests/browser/` | browser and editor-instance tests |

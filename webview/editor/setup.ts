@@ -1,6 +1,6 @@
 import { EditorView, keymap, drawSelection } from '@codemirror/view'
-import { Compartment, EditorState, Facet, Transaction, type ChangeSet, type Extension, type StateEffect } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { Compartment, EditorSelection, EditorState, Facet, Transaction, type ChangeSet, type Extension, type StateEffect } from '@codemirror/state'
+import { defaultKeymap } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
 import { closeSearchPanel, search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { editorFocused, irDecorationField, irFocusHandler, irMouseUpHandler } from './ir-state-field'
@@ -10,18 +10,19 @@ import { initialViewMode, viewModeField, profileFor, type ViewMode } from './vie
 import { perwriteTheme } from './theme'
 import { blockLineNumbers } from './block-line-numbers'
 import { linkDestination, wikilinkTarget } from './markdown-node-values'
-import { renderingProfileExtensions } from './rendering-profile'
+import { completeMarkdownTreeField, initialCompleteMarkdownTree, markdownLezerParser, renderingProfileExtensions } from './rendering-profile'
 import { compositionActiveField, compositionEventHandlers } from './composition-state'
 import { imageDocumentGeneration, imagePreparationExtension } from './image-widget'
 import { mermaidGeometryPreparationExtension } from './mermaid-geometry-preparation'
 import { searchRevealExtension, setRevealTargetEffect } from './search-reveal'
 import { toggleTaskMarker } from './task-editing'
+import { linkActivation, type LinkActivation } from './link-activation'
 import type { RenderingProfile } from '../../src/protocol'
 
 export interface EditorCallbacks {
   onDocUpdate?: (content: string) => void
   onChanges?: (changes: ChangeSet, view: EditorView, beforeContent: string, afterContent: string) => void
-  onLinkClick?: (url: string) => void
+  onLinkActivate?: LinkActivation
   onConfigurationFailure?: (reason: string) => void
 }
 
@@ -52,6 +53,33 @@ export function markdownLinkAt(state: EditorState, position: number): string | n
   return null
 }
 
+function linkDestinationForClick(event: MouseEvent, view: EditorView): string | null {
+  const positions: number[] = []
+  const target = event.target
+  if (target instanceof Node && view.dom.contains(target)) {
+    try {
+      const start = view.posAtDOM(target, 0)
+      const end = view.posAtDOM(target, target.childNodes.length)
+      positions.push(start)
+      if (end !== start) positions.push(end - 1)
+    } catch {}
+  }
+  if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+    const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
+    if (position !== null && !positions.includes(position)) positions.push(position)
+  }
+  for (const position of positions) {
+    const destination = markdownLinkAt(view.state, position)
+    if (destination !== null) return destination
+  }
+  const eventElement = event.composedPath().find(value => typeof value === 'object' && value !== null && 'nodeType' in value) as Node | undefined
+  const element = target && typeof target === 'object' && 'nodeType' in target
+    ? (target as Node).nodeType === Node.ELEMENT_NODE ? target as Element : (target as Node).parentElement
+    : eventElement?.nodeType === Node.ELEMENT_NODE ? eventElement as Element : eventElement?.parentElement ?? null
+  const destination = element?.closest<HTMLAnchorElement>('a[href]')?.getAttribute('href')
+  return destination || null
+}
+
 export function createEditor(
   root: HTMLElement,
   initialContent: string,
@@ -60,6 +88,7 @@ export function createEditor(
   renderingConfiguration: RenderingProfile,
   options: EditorOptions = {},
 ): EditorView {
+  const completeTree = markdownLezerParser(renderingConfiguration).parse(initialContent)
   const view = new EditorView({
     state: EditorState.create({
       doc: initialContent,
@@ -69,20 +98,20 @@ export function createEditor(
         imageDocumentGeneration,
         imagePreparationExtension,
         mermaidGeometryPreparationExtension,
-        keymap.of([{ key: 'Escape', run: closeSearchPanel }, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+        keymap.of([{ key: 'Escape', run: closeSearchPanel }, ...defaultKeymap, ...searchKeymap]),
         search({
           top: false,
           scrollToMatch: (range, _view) => setRevealTargetEffect.of({ from: range.from, to: range.to, source: 'internal' }),
         }),
         searchRevealExtension,
         highlightSelectionMatches(),
-        history(),
         drawSelection(),
         EditorView.lineWrapping,
         blockLineNumbers,
         perwriteTheme,
 
         editorFocused,
+        linkActivation.of(callbacks.onLinkActivate ?? null),
         initialViewMode.of(initialMode),
         viewModeField,
         editorEditableCompartment.of(editorEditable.of(options.editable ?? true)),
@@ -92,6 +121,8 @@ export function createEditor(
           profileFor(state.field(viewModeField)).editable && state.facet(editorEditable)),
         irFocusHandler,
         compositionActiveField,
+        initialCompleteMarkdownTree.of(completeTree),
+        completeMarkdownTreeField,
         irDecorationField,
         irTransactionFilter,
         irKeymap,
@@ -103,20 +134,6 @@ export function createEditor(
           : [],
 
         EditorView.domEventHandlers({
-          click(event, view) {
-            if (event.ctrlKey || event.metaKey) {
-              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-              if (pos === null) return false
-              const url = markdownLinkAt(view.state, pos)
-              if (url !== null && callbacks.onLinkClick) {
-                callbacks.onLinkClick(url)
-                event.preventDefault()
-                return true
-              }
-              return false
-            }
-            return false
-          },
           mousedown(event, view) {
             const target = event.target as HTMLElement
 
@@ -136,7 +153,7 @@ export function createEditor(
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             callbacks.onDocUpdate?.(update.state.doc.toString())
-            callbacks.onChanges?.(update.changes, view, update.startState.doc.toString(), update.state.doc.toString())
+            callbacks.onChanges?.(update.changes, update.view, update.startState.doc.toString(), update.state.doc.toString())
           }
         }),
       ],
@@ -144,12 +161,30 @@ export function createEditor(
     parent: root,
   })
 
+  view.contentDOM.addEventListener('click', event => {
+    if (!event.ctrlKey && !event.metaKey) return
+    const destination = linkDestinationForClick(event, view)
+    if (destination === null || !callbacks.onLinkActivate) return
+    callbacks.onLinkActivate(destination)
+    event.preventDefault()
+  })
+
   return view
 }
 
-export function setEditorContent(view: EditorView, newContent: string): void {
+
+function editorSelection(selection: readonly number[] | undefined): EditorSelection | undefined {
+  if (!selection || selection.length < 2) return undefined
+  return EditorSelection.create(selection.reduce<ReturnType<typeof EditorSelection.range>[]>((ranges, value, index) => index % 2 === 0 ? ranges : [...ranges, EditorSelection.range(selection[index - 1], value)], []))
+}
+
+export function setEditorContent(view: EditorView, newContent: string, selection?: readonly number[]): void {
   const currentContent = view.state.doc.toString()
-  if (currentContent === newContent) return
+  const nextSelection = editorSelection(selection)
+  if (currentContent === newContent) {
+    if (nextSelection) view.dispatch({ selection: nextSelection })
+    return
+  }
 
   let prefixLen = 0
   const minLen = Math.min(currentContent.length, newContent.length)
@@ -171,6 +206,7 @@ export function setEditorContent(view: EditorView, newContent: string): void {
 
   view.dispatch({
     changes: { from, to, insert },
+    ...(nextSelection ? { selection: nextSelection } : {}),
     effects: view.scrollSnapshot(),
     annotations: Transaction.addToHistory.of(false),
   })

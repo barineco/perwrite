@@ -6,6 +6,7 @@ import { buildDiffChunks, type DiffChunk } from './comparison-diff'
 import { setViewModeEffect, viewModeField } from './view-mode'
 import { reconfigureRendering } from './rendering-profile'
 import { revealTarget, type RevealSource } from './search-reveal'
+import type { LinkActivation } from './link-activation'
 
 export type ComparisonSide = 'original' | 'modified'
 
@@ -53,88 +54,9 @@ export function comparisonDecorations(side: ComparisonSide): Extension {
   return [comparisonSide.of(side), comparisonChunksField]
 }
 
-export interface ScrollAnchor {
-  readonly source: number
-  readonly target: number
-}
-
-export function scrollAnchors(
-  chunks: readonly DiffChunk[],
-  originalLength: number,
-  modifiedLength: number,
-  sourceSide: ComparisonSide,
-): readonly ScrollAnchor[] {
-  const pairs: ScrollAnchor[] = [{ source: 0, target: 0 }]
-  for (const chunk of chunks) {
-    if (sourceSide === 'original') {
-      pairs.push(
-        { source: chunk.originalFrom, target: chunk.modifiedFrom },
-        { source: chunk.originalTo, target: chunk.modifiedTo },
-      )
-    } else {
-      pairs.push(
-        { source: chunk.modifiedFrom, target: chunk.originalFrom },
-        { source: chunk.modifiedTo, target: chunk.originalTo },
-      )
-    }
-  }
-  pairs.push(sourceSide === 'original'
-    ? { source: originalLength, target: modifiedLength }
-    : { source: modifiedLength, target: originalLength })
-  pairs.sort((left, right) => left.source - right.source || left.target - right.target)
-
-  const normalized: ScrollAnchor[] = []
-  for (let index = 0; index < pairs.length;) {
-    const source = pairs[index].source
-    let targetTotal = 0
-    let count = 0
-    while (index < pairs.length && pairs[index].source === source) {
-      targetTotal += pairs[index].target
-      count++
-      index++
-    }
-    const target = targetTotal / count
-    const previous = normalized[normalized.length - 1]
-    normalized.push({ source, target: previous ? Math.max(previous.target, target) : target })
-  }
-  return normalized
-}
-
-export function interpolateAnchors(anchors: readonly ScrollAnchor[], source: number): number {
-  if (anchors.length === 0) return source
-  if (source <= anchors[0].source) return anchors[0].target
-  for (let index = 1; index < anchors.length; index++) {
-    const after = anchors[index]
-    if (source > after.source) continue
-    const before = anchors[index - 1]
-    if (after.source === before.source) return after.target
-    const ratio = (source - before.source) / (after.source - before.source)
-    return before.target + ratio * (after.target - before.target)
-  }
-  return anchors[anchors.length - 1].target
-}
-
-function documentY(view: EditorView, position: number): number {
-  const safePosition = Math.max(0, Math.min(position, view.state.doc.length))
-  const block = view.lineBlockAt(safePosition)
-  if (safePosition === view.state.doc.length) return block.bottom
-  return block.top
-}
-
-function domScrollTarget(
-  source: EditorView,
-  target: EditorView,
-  anchors: readonly ScrollAnchor[],
-): number {
-  const domAnchors = anchors.map(anchor => ({
-    source: documentY(source, anchor.source),
-    target: documentY(target, anchor.target),
-  }))
-  return interpolateAnchors(domAnchors, source.scrollDOM.scrollTop)
-}
-
 export interface ComparisonCallbacks {
   onEdit(side: ComparisonSide, documentId: string, changes: ChangeSet, view: EditorView, beforeContent: string, afterContent: string): void
+  onLinkActivate(documentId: string, destination: string): void
   onConfigurationFailure?(reason: string): void
 }
 
@@ -172,7 +94,8 @@ export class ComparisonEditorState {
       const target = comparison[side]
       return createEditor(parent, target.snapshot.content, {
         onConfigurationFailure: callbacks.onConfigurationFailure,
-        onDocUpdate: content => {
+        onLinkActivate: destination => callbacks.onLinkActivate(this.comparison[side].documentId, destination),
+        onDocUpdate: () => {
           if (this.applyingContent) return
           this.recomputeChunks()
         },
@@ -214,24 +137,21 @@ export class ComparisonEditorState {
     // A reveal scroll belongs only to its target side.  Do not mirror it into
     // the other editor while the measure/write scroll settles.
     if (this.revealScroll?.side === sourceSide) return
-    if (this.applyingScrollTo === sourceSide) {
-      this.applyingScrollTo = null
-      return
-    }
+    if (this.applyingScrollTo === sourceSide) return
     const source = sourceSide === 'original' ? this.original : this.modified
     const target = sourceSide === 'original' ? this.modified : this.original
     const targetSide = sourceSide === 'original' ? 'modified' : 'original'
     this.synchronizationApplications++
-    const anchors = scrollAnchors(
-      this.chunks,
-      this.original.state.doc.length,
-      this.modified.state.doc.length,
-      sourceSide,
-    )
+    const sourceMaximum = Math.max(1, source.scrollDOM.scrollHeight - source.scrollDOM.clientHeight)
+    const targetMaximum = Math.max(0, target.scrollDOM.scrollHeight - target.scrollDOM.clientHeight)
+    const scrollTop = source.scrollDOM.scrollTop / sourceMaximum * targetMaximum
     this.applyingScrollTo = targetSide
-    target.scrollDOM.scrollTop = domScrollTarget(source, target, anchors)
+    target.scrollDOM.scrollTop = scrollTop
     requestAnimationFrame(() => {
-      if (this.applyingScrollTo === targetSide) this.applyingScrollTo = null
+      target.scrollDOM.scrollTop = scrollTop
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.applyingScrollTo === targetSide) this.applyingScrollTo = null
+      }))
     })
   }
 
@@ -283,15 +203,8 @@ export class ComparisonEditorState {
   }
 
   reconfigureRendering(rendering: RenderingProfile): void {
-    const scrollPositions = [this.original.scrollDOM.scrollTop, this.modified.scrollDOM.scrollTop] as const
     this.original.dispatch({ effects: reconfigureRendering(rendering) })
     this.modified.dispatch({ effects: reconfigureRendering(rendering) })
-    const restoreScroll = (): void => {
-      this.original.scrollDOM.scrollTop = scrollPositions[0]
-      this.modified.scrollDOM.scrollTop = scrollPositions[1]
-    }
-    restoreScroll()
-    requestAnimationFrame(restoreScroll)
   }
 
   update(root: HTMLElement, comparison: ResolvedGitComparison): void {
@@ -313,10 +226,6 @@ export class ComparisonEditorState {
     this.recomputeChunks()
   }
 
-  invalidateAppearance(): void {
-    this.original.dispatch({})
-    this.modified.dispatch({})
-  }
 
   destroy(): void {
     this.original.scrollDOM.removeEventListener('scroll', this.originalScroll)

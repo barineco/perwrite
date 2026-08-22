@@ -10,6 +10,8 @@ const variables = [
   '--perwrite-gutter-compact-gap:8px', '--perwrite-cursor-foreground:#000000',
   '--perwrite-selection-background:#bdddff', '--perwrite-heading-1-scale:2',
   '--perwrite-heading-1-line-height:1.2', '--perwrite-muted-foreground:#666666',
+  '--perwrite-table-widget-block-padding:8px', '--perwrite-table-cell-block-padding:6px',
+  '--perwrite-table-cell-inline-padding:12px',
 ].join(';')
 
 await runBrowserTest({
@@ -55,6 +57,27 @@ await runBrowserTest({
       position => globalThis.interactionScenario.setSelection(position),
       anchor,
     )
+
+    await reset('[external](#external)\n\n[heading](#heading)\n\n# heading', 0)
+    const standardLinks = await page.evaluate(() => {
+      globalThis.interactionScenario.view.dom.querySelector('.cm-link')?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+      return globalThis.interactionScenario.linkActivationWitness()
+    })
+    check('通常 click はリンク操作を発行しない', standardLinks.length === 0, JSON.stringify(standardLinks))
+    const modifierKey = process.platform === 'darwin' ? 'metaKey' : 'ctrlKey'
+    const modifierLink = await page.evaluate(key => {
+      const link = [...globalThis.interactionScenario.view.dom.querySelectorAll('a.cm-link')].find(candidate => candidate.getAttribute('href') === '#heading')
+      if (!link) return []
+      link.addEventListener('click', event => event.preventDefault(), { once: true })
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...(key === 'metaKey' ? { metaKey: true } : { ctrlKey: true }) }))
+      return globalThis.interactionScenario.linkActivationWitness()
+    }, modifierKey)
+    check('standard の修飾 click は exact activate-link destination を発行する', modifierLink.length === 1 && modifierLink[0].documentId === 'standard-document' && modifierLink[0].destination === '#heading', JSON.stringify(modifierLink))
+    const tableOrdinary = await page.evaluate(() => globalThis.interactionScenario.tableLinkActivationWitness(null))
+    const tableModified = await page.evaluate(modifier => globalThis.interactionScenario.tableLinkActivationWitness(modifier), process.platform === 'darwin' ? 'meta' : 'ctrl')
+    check('TableWidget は通常 click で activation を発行せず source 開示を維持する', tableOrdinary.activations.length === 0 && tableOrdinary.sourceVisible, JSON.stringify(tableOrdinary))
+    check('TableWidget は修飾 click で一回の activation と source 開示を維持する', tableModified.activations.length === 1 && tableModified.activations[0].destination === 'child.md' && tableModified.sourceVisible, JSON.stringify(tableModified))
+
     const clickSourcePosition = async (position) => {
       const point = await page.evaluate((sourcePosition) => {
         const rect = globalThis.interactionScenario.view.coordsAtPos(sourcePosition)
@@ -102,8 +125,17 @@ await runBrowserTest({
     const wrappingDoc = 'before\n\n```ts\n' + longCodeLine + '\n```\n\nafter'
     await reset(wrappingDoc, 1)
     await page.evaluate(() => { globalThis.codeBlockWrapEditorIdentity = document.querySelector('.cm-editor') })
+    await setMode('raw')
+    const rawGeneration = await page.evaluate(() => globalThis.interactionScenario.reconfigureCodeBlockWrap(true))
+    await page.waitForTimeout(20)
+    const rawWitness = await page.evaluate(() => globalThis.interactionScenario.codeBlockWrapWitness())
+    check('Raw は source を保存し code block 装飾を持たない',
+      rawWitness.mode === 'raw' && rawWitness.doc === wrappingDoc && rawWitness.selection === 1 &&
+        rawWitness.state.generation === rawGeneration && rawWitness.sourceLineCount === 0 && rawWitness.widgetCount === 0,
+      JSON.stringify(rawWitness))
+
     const wrappingWitnesses = []
-    for (const mode of ['raw', 'rich', 'render']) {
+    for (const mode of ['rich', 'render']) {
       await setMode(mode)
       const enabledGeneration = await page.evaluate(() => globalThis.interactionScenario.reconfigureCodeBlockWrap(true))
       await waitForCodeBlockWrap(enabledGeneration, true, mode)
@@ -114,7 +146,7 @@ await runBrowserTest({
       wrappingWitnesses.push({ mode, enabled, disabled })
     }
     const wrappingIdentity = await page.evaluate(() => document.querySelector('.cm-editor') === globalThis.codeBlockWrapEditorIdentity)
-    check('raw・rich・render の code block は有効時に実寸で折り返し、無効時に論理行を保持する',
+    check('Rich と Render の code block は有効時に折り返し、無効時に論理行を保持する',
       wrappingWitnesses.every(({ mode, enabled, disabled }) =>
         enabled.mode === mode && disabled.mode === mode &&
         enabled.whiteSpace === 'break-spaces' && enabled.overflowWrap === 'anywhere' &&
@@ -123,12 +155,13 @@ await runBrowserTest({
         disabled.scrollWidth > disabled.clientWidth &&
         disabled.editorScrollWidth <= disabled.editorClientWidth + 1),
       JSON.stringify(wrappingWitnesses))
-    check('折り返しの再構成は EditorView・source・selection を保存する',
-      wrappingIdentity && wrappingWitnesses.every(({ enabled, disabled }) =>
-        enabled.doc === wrappingDoc && disabled.doc === wrappingDoc &&
-        enabled.selection === 1 && disabled.selection === 1 &&
-        enabled.state.generation < disabled.state.generation),
-      JSON.stringify({ wrappingIdentity, wrappingWitnesses }))
+    check('モード切替と折り返しの再構成は EditorView・source・selection を保存する',
+      wrappingIdentity && rawWitness.doc === wrappingDoc && rawWitness.selection === 1 &&
+        wrappingWitnesses.every(({ enabled, disabled }) =>
+          enabled.doc === wrappingDoc && disabled.doc === wrappingDoc &&
+          enabled.selection === 1 && disabled.selection === 1 &&
+          enabled.state.generation < disabled.state.generation),
+      JSON.stringify({ wrappingIdentity, rawWitness, wrappingWitnesses }))
 
     await reset('alpha\nbeta\ngamma', 2)
     await setMode('raw')
@@ -236,6 +269,49 @@ await runBrowserTest({
         item.after.witness.target?.source === 'external' &&
         item.after.witness.lineOffsets.length >= 1 && item.after.witness.exactOffsets.length >= 1 &&
         item.after.sourceText?.replace(/\s/g, '').includes(item.source.replace(/\s/g, ''))), JSON.stringify(widgetReveals))
+
+    const tableSource = '| A | B |\n| - | - |\n| 1 | 2 |'
+    const tableDocument = `${tableSource}\n\nafter`
+    const tableModes = []
+    for (const mode of ['raw', 'rich', 'render']) {
+      await reset(tableDocument, tableDocument.length)
+      await setMode(mode)
+      const inactive = await page.evaluate(() => globalThis.interactionScenario.tableWitness())
+      await setSelection(tableSource.indexOf('1'))
+      const selected = await page.evaluate(() => globalThis.interactionScenario.tableWitness())
+      tableModes.push({ mode, inactive, selected })
+    }
+    const tableRange = await page.evaluate(() => globalThis.interactionScenario.syntaxRange('Table'))
+    check('rich と render は非アクティブ TableWidget と block 全体の source 開示を共有する',
+      tableModes.filter(item => item.mode !== 'raw').every(item =>
+        item.inactive.widgetCount === 1 && item.selected.widgetCount === 0 && item.selected.tableClassCount === 0 &&
+        item.selected.snapshot.doc === tableDocument && item.selected.snapshot.ranges[0].head === tableSource.indexOf('1')) &&
+      tableModes.find(item => item.mode === 'raw')?.inactive.widgetCount === 0 &&
+      tableModes.find(item => item.mode === 'raw')?.selected.widgetCount === 0 &&
+      tableRange?.from === 0 && tableRange?.to === tableSource.length,
+      JSON.stringify({ tableModes, tableRange }))
+
+    await page.evaluate(() => globalThis.interactionScenario.setTableAppearance(6, 12, 8))
+    await reset(tableDocument, tableDocument.length)
+    await setMode('render')
+    const defaultTableStyle = await page.evaluate(() => globalThis.interactionScenario.tableWitness())
+    await page.evaluate(() => globalThis.interactionScenario.setTableAppearance(9, 17, 11))
+    const changedTableStyle = await page.evaluate(() => globalThis.interactionScenario.tableWitness())
+    check('table wrapper、inner table、cell の computed style は三つの appearance 値を各軸へ適用する',
+      defaultTableStyle.wrapper?.paddingTop === '8px' && defaultTableStyle.wrapper?.paddingBottom === '8px' &&
+      defaultTableStyle.wrapper?.paddingLeft === '0px' && defaultTableStyle.wrapper?.paddingRight === '0px' &&
+      ['marginTop', 'marginRight', 'marginBottom', 'marginLeft'].every(key => defaultTableStyle.table?.[key] === '0px') &&
+      defaultTableStyle.header?.paddingTop === '6px' && defaultTableStyle.header?.paddingBottom === '6px' &&
+      defaultTableStyle.header?.paddingLeft === '12px' && defaultTableStyle.header?.paddingRight === '12px' &&
+      defaultTableStyle.body?.paddingTop === '6px' && defaultTableStyle.body?.paddingBottom === '6px' &&
+      defaultTableStyle.body?.paddingLeft === '12px' && defaultTableStyle.body?.paddingRight === '12px' &&
+      changedTableStyle.wrapper?.paddingTop === '11px' && changedTableStyle.wrapper?.paddingBottom === '11px' &&
+      changedTableStyle.header?.paddingTop === '9px' && changedTableStyle.header?.paddingBottom === '9px' &&
+      changedTableStyle.header?.paddingLeft === '17px' && changedTableStyle.header?.paddingRight === '17px' &&
+      changedTableStyle.body?.paddingTop === '9px' && changedTableStyle.body?.paddingBottom === '9px' &&
+      changedTableStyle.body?.paddingLeft === '17px' && changedTableStyle.body?.paddingRight === '17px',
+      JSON.stringify({ defaultTableStyle, changedTableStyle }))
+    await page.evaluate(() => globalThis.interactionScenario.setTableAppearance(6, 12, 8))
 
     const safeBandDocument = [
       ...Array.from({ length: 90 }, (_, index) => `filler ${index}`),

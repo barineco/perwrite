@@ -6,72 +6,12 @@ export type Result<T, E = string> =
   | { ok: false; error: E }
 
 export type DocumentVersion = number
-export type EditId = string
 export type ComparisonSide = 'original' | 'modified'
-
-export type EditDeliveryTarget =
-  | { readonly kind: 'editing'; readonly documentId: string }
-  | { readonly kind: 'comparison'; readonly documentId: string; readonly side: ComparisonSide }
 
 export interface TextChange {
   readonly from: number
   readonly to: number
   readonly insert: string
-}
-
-export interface EditRequest {
-  readonly editId: EditId
-  readonly target: EditDeliveryTarget
-  readonly sessionGeneration: number
-  readonly baseDocumentVersion: DocumentVersion
-  readonly changes: readonly TextChange[]
-}
-
-export interface HostDocumentObservation {
-  readonly target: EditDeliveryTarget
-  readonly sessionGeneration: number
-  readonly documentVersion: DocumentVersion
-  readonly content: string
-  readonly contentHash: string
-}
-
-export interface VerifiedEditObservation {
-  readonly request: EditRequest
-  readonly before: HostDocumentObservation
-  readonly after: HostDocumentObservation
-}
-
-export type EditFailureKind =
-  | 'base-version-conflict'
-  | 'apply-rejected'
-  | 'document-mismatch'
-  | 'invalid-change'
-  | 'observation-mismatch'
-  | 'resync-failed'
-
-export interface EditFailure {
-  readonly editId: EditId
-  readonly target: EditDeliveryTarget
-  readonly sessionGeneration: number
-  readonly baseDocumentVersion: DocumentVersion
-  readonly kind: EditFailureKind
-  readonly reason: string
-  readonly currentDocumentVersion?: DocumentVersion
-  readonly snapshot?: HostDocumentObservation
-}
-
-export type EditVerificationFailure = EditFailure
-export type EditVerificationResult = Result<VerifiedEditObservation, EditVerificationFailure>
-export type EditOutcome = EditVerificationResult
-
-export interface QueuedEditRecovery {
-  readonly target: EditDeliveryTarget
-  readonly sessionGeneration: number
-  readonly changes: readonly TextChange[]
-  readonly failure: EditFailure
-  readonly snapshot?: HostDocumentObservation
-  readonly baseContent: string
-  readonly afterInFlightContent: string
 }
 
 export type TextChangeValidation = {
@@ -90,6 +30,13 @@ function isSurrogateBoundary(content: string, offset: number): boolean {
   const previous = content.charCodeAt(offset - 1)
   const next = content.charCodeAt(offset)
   return !(previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff)
+}
+
+/** Selection is an even sequence of CodeMirror range anchor/head UTF-16 offsets. */
+export function validateSelection(selection: readonly number[], documentLength: number): TextChangeValidation {
+  if (!Array.isArray(selection) || selection.length % 2 !== 0) return { ok: false, reason: 'selection must contain anchor/head pairs' }
+  if (selection.some(offset => !isInteger(offset) || offset < 0 || offset > documentLength)) return { ok: false, reason: 'selection offset is outside the document' }
+  return { ok: true }
 }
 
 export function validateTextChanges(
@@ -112,41 +59,6 @@ export function validateTextChanges(
     previousTo = change.to
   }
   return { ok: true }
-}
-
-export function validateEditRequest(
-  request: EditRequest,
-  documentLength?: number,
-  documentContent?: string,
-): TextChangeValidation {
-  if (typeof request !== 'object' || request === null || typeof request.editId !== 'string' || request.editId.length === 0 ||
-    !isEditDeliveryTarget(request.target) || !isInteger(request.sessionGeneration) || request.sessionGeneration < 0 || !isInteger(request.baseDocumentVersion)) {
-    return { ok: false, reason: 'edit request identity or version is invalid' }
-  }
-  return validateTextChanges(request.changes, documentLength, documentContent)
-}
-
-export function isEditDeliveryTarget(value: unknown): value is EditDeliveryTarget {
-  if (typeof value !== 'object' || value === null) return false
-  const target = value as Record<string, unknown>
-  if ((target.kind !== 'editing' && target.kind !== 'comparison') || typeof target.documentId !== 'string' || target.documentId.length === 0) return false
-  return target.kind === 'editing'
-    ? Object.keys(target).length === 2 && !('side' in target)
-    : Object.keys(target).length === 3 && (target.side === 'original' || target.side === 'modified')
-}
-
-export function encodeCanonicalTextChanges(changes: readonly TextChange[]): string {
-  return JSON.stringify(changes.map(change => ({ from: change.from, to: change.to, insert: change.insert })))
-}
-
-export function encodeCanonicalEditRequest(request: EditRequest): string {
-  return JSON.stringify({
-    editId: request.editId,
-    target: request.target,
-    sessionGeneration: request.sessionGeneration,
-    baseDocumentVersion: request.baseDocumentVersion,
-    changes: JSON.parse(encodeCanonicalTextChanges(request.changes)),
-  })
 }
 
 export function utf8ByteLength(value: string): number {
@@ -309,10 +221,17 @@ export interface EditorConfiguration {
   readonly configurationFailure: string | null
 }
 
+export interface DraftEdit {
+  readonly uri: string
+  readonly generation: number
+  readonly beforeHash: string
+  readonly changes: readonly TextChange[]
+  readonly selection: readonly number[]
+}
+
 export type HostMessage =
   | { type: 'init'; documentId: string; content: string; documentVersion?: DocumentVersion; appearance: AppearanceHostSources; baseResourceUri: string; configuration: Result<EditorConfiguration> }
-  | { type: 'host-document-observation'; observation: HostDocumentObservation }
-  | { type: 'edit-result'; result: EditOutcome }
+  | { type: 'draft-snapshot'; uri: string; content: string; contentHash: string; selection: readonly number[]; generation: number; dirty: boolean; externalChange: string | null }
   | { type: 'appearance-change'; appearance: AppearanceHostSources }
   | { type: 'configuration-change'; configuration: Result<EditorConfiguration> }
   | { type: 'comparison-init'; result: ComparisonResult<ResolvedGitComparison>; appearance: AppearanceHostSources; configuration: Result<EditorConfiguration> }
@@ -323,9 +242,8 @@ export type HostMessage =
 export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'editor-ready'; documentIds: readonly string[] }
-  | ({ type: 'edit' } & EditRequest)
-  | { type: 'save' }
-  | { type: 'open-link'; url: string }
+  | ({ type: 'draft-edit' } & DraftEdit)
+  | { type: 'activate-link'; documentId: string; destination: string }
   | ComparisonRequest
 
 export function appearanceChangeMessage(appearance: AppearanceHostSources): HostMessage {

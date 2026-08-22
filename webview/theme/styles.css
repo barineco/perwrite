@@ -278,6 +278,7 @@ body.comparing .comparison-targets {
 .cm-table-widget table {
   border-collapse: collapse;
   width: 100%;
+  margin: 0;
 }
 .cm-table-widget th,
 .cm-table-widget td {
@@ -290,23 +291,6 @@ body.comparing .comparison-targets {
   background: var(--perwrite-table-header-background);
 }
 
-.cm-editor .cm-line.cm-table-line {
-  background: var(--perwrite-table-header-background);
-  font-family: var(--perwrite-font-family);
-  font-size: var(--perwrite-font-size);
-}
-.cm-editor .cm-line.cm-table-first {
-  border-radius: 4px 4px 0 0;
-}
-.cm-editor .cm-line.cm-table-last {
-  border-radius: 0 0 4px 4px;
-}
-
-.cm-table-source-cell {
-  padding: 0 var(--perwrite-table-cell-inline-padding);
-}
-
-.cm-table-source-delimiter,
 .cm-math-source,
 .cm-image-source,
 .cm-task-source,

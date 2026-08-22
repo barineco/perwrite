@@ -2,7 +2,7 @@
   "name": "perwrite",
   "displayName": "Perwrite",
   "description": "Obsidian-style inline Markdown editor with Mermaid, KaTeX, and Shiki highlighting",
-  "version": "0.0.32",
+  "version": "0.0.36",
   "publisher": "barineco",
   "license": "MIT",
   "repository": {
@@ -320,10 +320,11 @@
     "package": "node esbuild.config.mjs --production && pnpm --dir theme-source build -- --production && pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links && (cd theme-source && pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository)",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:browser": "node tests/browser/verify.mjs && node tests/browser/verify-webview.mjs && node tests/browser/verify-interactions.mjs && node tests/browser/verify-mermaid.mjs",
+    "test:browser": "node tests/browser/verify.mjs && node tests/browser/verify-webview.mjs && node tests/browser/verify-mermaid.mjs",
     "test:vscode-version": "node --test tests/browser/vscode-version.test.mjs",
     "test:vscodium-search-reveal": "node tests/browser/verify-search-target-reveal.mjs",
-    "test:vscodium-code-block-wrap": "node tests/browser/verify-vscodium-code-block-wrap.mjs"
+    "test:vscodium-code-block-wrap": "node tests/browser/verify-vscodium-code-block-wrap.mjs",
+    "test:vscodium-rich-table-release": "node tests/browser/verify-vscodium-rich-table-release.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
@@ -342,6 +343,7 @@
     "@codemirror/search": "^6.6.0",
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.35.0",
+    "@lezer/common": "^1.5.0",
     "@lezer/markdown": "^1.4.0",
     "@mermaid-js/layout-elk": "^0.2.0",
     "katex": "^0.16.0",

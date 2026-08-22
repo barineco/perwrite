@@ -12,16 +12,15 @@ import { setBaseResourceUri } from './editor/image-widget'
 import { viewModeField, setViewModeEffect, cycleViewMode, type ViewMode } from './editor/view-mode'
 import { ComparisonEditorState } from './editor/comparison-state'
 import { changeSetToTextChanges } from './editor/edit-changes'
-import { EditDeliveryScheduler, type EditDeliveryTarget, type PendingEditDelivery } from './editor/edit-delivery'
 import { decodeHostMessage } from '../src/message-validation'
 import { beginComparison, createWebviewState, initializeWebviewSession, settleComparison, transitionWebviewState, type WebviewState } from './session-state'
 import type {
-  ComparisonFailure, HostDocumentObservation, EditorConfiguration, GitRevision, HostMessage, ResolvedGitComparison,
+  ComparisonFailure, EditorConfiguration, GitRevision, HostMessage, ResolvedGitComparison,
   ResolvedReadonlyDocument, WebviewMessage,
 } from '../src/protocol'
 import { contentHash } from '../src/protocol'
 import type { EditorView } from '@codemirror/view'
-import { handleHostResult, type HostFailureDisplay } from './host-result'
+interface HostFailureDisplay { readonly title: string; readonly detail: string; readonly actions?: readonly { readonly label: string; readonly run: () => void }[] }
 import { applyFailureDisplay } from './failure-dom'
 import {
   applyAppearanceResolution,
@@ -51,7 +50,6 @@ const vscode = acquireVsCodeApi()
 
 type InitMessage = Extract<HostMessage, { type: 'init' }>
 let configurationState: ConfigurationState<EditorView, InitMessage> = { kind: 'uninitialized' }
-let editVersion = 0
 let isExternalUpdate = false
 let appliedAppearance: AppliedAppearance | null = null
 let currentAppearanceSources: AppearanceHostSources | null = null
@@ -60,7 +58,8 @@ let controlsInitialized = false
 let themeObserverInitialized = false
 let comparisonState: ComparisonEditorState | null = null
 let comparisonConfiguration: EditorConfiguration | null = null
-let pendingComparison: ResolvedGitComparison | null = null
+let pendingComparisonIntent: { readonly original: GitRevision; readonly modified: GitRevision } | null = null
+let comparisonIntentToken = 0
 let pendingReadonly: ResolvedReadonlyDocument | null = null
 let readonlyView: EditorView | null = null
 let webviewState: WebviewState = createWebviewState('perwrite-webview')
@@ -77,9 +76,8 @@ function setWebviewState(next: WebviewState): void {
 }
 
 let activeDocumentId: string | null = null
-let activeDocumentVersion = 0
+let draftGeneration = 0
 let acceptedConfiguration: EditorConfiguration | null = null
-const comparisonDocumentVersions = new Map<string, number>()
 
 function currentView(): EditorView | null {
   if (comparisonState) return comparisonState.original
@@ -95,32 +93,11 @@ function postMessage(msg: WebviewMessage): void {
   vscode.postMessage(msg)
 }
 
-const editDelivery = new EditDeliveryScheduler(
-  (pending: PendingEditDelivery, editId: string) => {
-    postMessage({
-      type: 'edit', editId, target: pending.target,
-      sessionGeneration: pending.sessionGeneration,
-      baseDocumentVersion: pending.baseDocumentVersion,
-      changes: changeSetToTextChanges(pending.changes),
-    })
-  },
-  () => {
-    editVersion++
-    return `${webviewState.sessionIdentity}:${webviewState.sessionGeneration}:${editVersion}`
-  },
-)
-
-function cancelPendingEdit(): void {
-  editDelivery.cancel('display session changed')
-}
-
-function scheduleEdit(
-  target: EditDeliveryTarget,
-  baseDocumentVersion: number,
-  baseContent: string,
-  changes: import('@codemirror/state').ChangeSet,
-): void {
-  editDelivery.schedule(target, webviewState.sessionGeneration, baseDocumentVersion, baseContent, changes)
+function selectionOffsets(view: EditorView): readonly number[] { return view.state.selection.ranges.flatMap(range => [range.anchor, range.head]) }
+function scheduleEdit(view: EditorView, beforeContent: string, _afterContent: string, changes: import('@codemirror/state').ChangeSet): void {
+  if (!activeDocumentId || isExternalUpdate) return
+  postMessage({ type: 'draft-edit', uri: activeDocumentId, generation: draftGeneration, beforeHash: contentHash(beforeContent), changes: changeSetToTextChanges(changes), selection: selectionOffsets(view) })
+  draftGeneration++
 }
 
 function reportReadyEditors(documentIds: readonly string[]): void {
@@ -170,45 +147,6 @@ function acceptConfigurationGeneration(configuration: EditorConfiguration): 'acc
   return 'accepted'
 }
 
-function acceptHostDocumentObservation(observation: HostDocumentObservation): boolean {
-  if (observation.sessionGeneration !== webviewState.sessionGeneration || observation.contentHash !== contentHash(observation.content)) return false
-  if (observation.target.kind === 'comparison') {
-    if (!comparisonState || comparisonState.documentIdForSide(observation.target.side) !== observation.target.documentId) return false
-    const acceptedVersion = comparisonDocumentVersions.get(observation.target.documentId)
-    if (acceptedVersion === undefined || observation.documentVersion <= acceptedVersion) return false
-    isExternalUpdate = true
-    comparisonState.updateContent(observation.target.side, observation.content)
-    isExternalUpdate = false
-    comparisonDocumentVersions.set(observation.target.documentId, observation.documentVersion)
-    setWebviewState(transitionWebviewState(webviewState, { type: 'apply-snapshot', content: observation.content, selection: [] }).state)
-    document.body.dataset.externalUpdateDocumentLength = String(comparisonState.viewForDocumentId(observation.target.documentId)?.state.doc.length ?? 0)
-    return true
-  }
-  if (comparisonState || activeDocumentId !== observation.target.documentId || observation.documentVersion <= activeDocumentVersion) return false
-  const view = configurationState.kind === 'active' ? configurationState.view : null
-  if (view) {
-    isExternalUpdate = true
-    setEditorContent(view, observation.content)
-    isExternalUpdate = false
-    document.body.dataset.externalUpdateDocumentLength = String(view.state.doc.length)
-  } else {
-    configurationState = updateInitialInvalidContent(configurationState, observation.content)
-  }
-  activeDocumentVersion = observation.documentVersion
-  setWebviewState(transitionWebviewState(webviewState, { type: 'apply-snapshot', content: observation.content, selection: [] }).state)
-  return true
-}
-
-function applyRecoveredContent(target: EditDeliveryTarget, content: string): void {
-  isExternalUpdate = true
-  if (target.kind === 'comparison' && comparisonState) comparisonState.updateContent(target.side, content)
-  else {
-    const view = currentView()
-    if (view && activeDocumentId === target.documentId) setEditorContent(view, content)
-  }
-  isExternalUpdate = false
-}
-
 function modeLabel(mode: ViewMode): string {
   return mode.charAt(0).toUpperCase() + mode.slice(1)
 }
@@ -228,6 +166,12 @@ function revisionFromInput(value: string): GitRevision | null {
 }
 
 function showComparisonPresentation(): void {
+  if (pendingComparisonIntent) {
+    document.body.dataset.comparisonPresentation = 'pending'
+    delete document.body.dataset.comparisonRequestId
+    delete document.body.dataset.comparisonSessionGeneration
+    return
+  }
   const presentation = webviewState.comparison
   document.body.dataset.comparisonPresentation = presentation.kind
   if (presentation.kind === 'pending') {
@@ -249,23 +193,10 @@ function showComparisonPresentation(): void {
   delete document.body.dataset.comparisonSessionGeneration
 }
 
-function requestComparison(original: GitRevision, modified: GitRevision): void {
-  cancelPendingEdit()
-  comparisonState?.destroy()
-  comparisonState = null
-  comparisonConfiguration = null
-  pendingComparison = null
-  readonlyView?.destroy()
-  readonlyView = null
-  pendingReadonly = null
-  document.body.classList.remove('comparing')
-  delete document.body.dataset.comparisonIdentity
-  delete document.body.dataset.editorKind
-  const root = document.getElementById('editor')
-  if (root) {
-    root.className = ''
-    root.replaceChildren()
-  }
+function beginPendingComparison(token: number): void {
+  if (token !== comparisonIntentToken || !pendingComparisonIntent) return
+  const { original, modified } = pendingComparisonIntent
+  pendingComparisonIntent = null
   const requestId = webviewState.nextComparisonRequest + 1
   const transition = beginComparison(webviewState, requestId, original, modified)
   setWebviewState(transition.state)
@@ -273,6 +204,13 @@ function requestComparison(original: GitRevision, modified: GitRevision): void {
   for (const effect of transition.effects) if (effect.type === 'request-comparison') {
     postMessage({ type: 'comparison-request', requestId: effect.requestId, original: effect.original, modified: effect.modified })
   }
+}
+
+function requestComparison(original: GitRevision, modified: GitRevision): void {
+  const token = ++comparisonIntentToken
+  pendingComparisonIntent = { original, modified }
+  document.body.dataset.comparisonPresentation = 'pending'
+  beginPendingComparison(token)
 }
 
 function setDiffControlAvailable(available: boolean): void {
@@ -308,16 +246,11 @@ function createConfiguredEditor(init: InitMessage, configuration: EditorConfigur
   const root = document.getElementById('editor')!
   return createEditor(root, init.content, {
     onConfigurationFailure: showConfigurationFailure,
-    onChanges: (changes, _view, beforeContent) => {
+    onChanges: (changes, view, beforeContent, afterContent) => {
       if (isExternalUpdate) return
-      scheduleEdit(
-        { kind: 'editing', documentId: init.documentId },
-        activeDocumentVersion,
-        beforeContent,
-        changes,
-      )
+      scheduleEdit(view, beforeContent, afterContent, changes)
     },
-    onLinkClick: url => postMessage({ type: 'open-link', url }),
+    onLinkActivate: destination => postMessage({ type: 'activate-link', documentId: init.documentId, destination }),
   }, configuration.defaultViewMode, configuration.rendering)
 }
 
@@ -332,14 +265,18 @@ function appearanceAdapter() {
     },
     applyMermaidTheme: updateMermaidTheme,
     applyMetrics,
+    invalidateEditorAppearances() {
+      const active = configurationState.kind === 'active' ? configurationState.view : null
+      if (active) invalidateEditorAppearance(active)
+      if (comparisonState) {
+        invalidateEditorAppearance(comparisonState.original)
+        invalidateEditorAppearance(comparisonState.modified)
+      }
+      if (readonlyView) invalidateEditorAppearance(readonlyView)
+    },
     beginFontResourcePreparation,
     invalidateWidgets() {
       refreshMermaidPresentations()
-      if (comparisonState) comparisonState.invalidateAppearance()
-      else {
-        const view = currentView()
-        if (view) invalidateEditorAppearance(view)
-      }
     },
     showFailure(display: AppearanceFailureDisplay | null) {
       showThemeFailure(display)
@@ -385,7 +322,6 @@ function setupThemeObserver(): void {
 }
 
 function createComparison(comparison: ResolvedGitComparison, configuration: EditorConfiguration): void {
-  cancelPendingEdit()
   setWebviewState(transitionWebviewState(webviewState, { type: 'set-display-session', displaySession: 'comparison' }).state)
   const root = document.getElementById('editor')!
   if (configurationState.kind === 'active') {
@@ -406,13 +342,11 @@ function createComparison(comparison: ResolvedGitComparison, configuration: Edit
     configuration.rendering,
     {
       onConfigurationFailure: showConfigurationFailure,
-      onEdit(side, documentId, changes, _view, beforeContent, _afterContent) {
-        scheduleEdit(
-          { kind: 'comparison', documentId, side },
-          comparisonDocumentVersions.get(documentId) ?? 0,
-          beforeContent,
-          changes,
-        )
+      onLinkActivate(documentId, destination) {
+        postMessage({ type: 'activate-link', documentId, destination })
+      },
+      onEdit(_side, _documentId, changes, view, beforeContent, afterContent) {
+        scheduleEdit(view, beforeContent, afterContent, changes)
       },
     },
   )
@@ -426,7 +360,6 @@ function createReadonlyDocument(
   documentValue: ResolvedReadonlyDocument,
   configuration: EditorConfiguration,
 ): void {
-  cancelPendingEdit()
   setWebviewState(transitionWebviewState(webviewState, { type: 'set-display-session', displaySession: 'readonly' }).state)
   const root = document.getElementById('editor')!
   if (configurationState.kind === 'active') {
@@ -442,6 +375,7 @@ function createReadonlyDocument(
   readonlyView = createEditor(root, documentValue.snapshot.content, {
     onDocUpdate() {},
     onConfigurationFailure: showConfigurationFailure,
+    onLinkActivate: destination => postMessage({ type: 'activate-link', documentId: documentValue.documentId, destination }),
   }, configuration.defaultViewMode, configuration.rendering, {
     editable: false,
     immutable: true,
@@ -453,52 +387,38 @@ function createReadonlyDocument(
   showReadonlyReason(documentValue)
 }
 
-async function handleHostMessage(msg: HostMessage): Promise<void> {
-  if (msg.type === 'edit-result') {
-    if (msg.result.ok) {
-      const observation = msg.result.value
-      const result = editDelivery.recordObservation(observation)
-      if (result.ok) {
-        handleHostResult(msg, showEditFailure)
-        document.body.dataset.lastEditId = observation.request.editId
-        document.body.dataset.lastEditBaseDocumentVersion = String(observation.request.baseDocumentVersion)
-        document.body.dataset.lastEditAppliedDocumentVersion = String(observation.after.documentVersion)
-        if (observation.after.target.kind === 'editing') activeDocumentVersion = observation.after.documentVersion
-        comparisonDocumentVersions.set(observation.after.target.documentId, observation.after.documentVersion)
-      }
-    } else {
-      const result = editDelivery.recordFailure(msg.result.error)
-      if (result.kind === 'stale-result') return
-      handleHostResult(msg, showEditFailure)
-      if (msg.result.error.snapshot) acceptHostDocumentObservation(msg.result.error.snapshot)
-      if (result.kind === 'recovery-required' && editDelivery.state.kind === 'recovery') {
-        showEditFailure({
-          title: 'Queued edit recovery required', detail: result.reason,
-          actions: [
-            { label: '再試行', run: () => {
-              const retry = editDelivery.retryRecovery()
-              if (!retry.ok) showEditFailure({ title: 'Queued edit recovery required', detail: retry.reason })
-              else if (editDelivery.state.kind === 'inFlight') {
-                applyRecoveredContent(editDelivery.state.inFlight.target, editDelivery.state.inFlight.afterContent)
-                showEditFailure(null)
-              }
-            } },
-            { label: '待機中の編集を破棄', run: () => {
-              editDelivery.discardRecovery('Queued edit discarded by user')
-              showEditFailure({ title: 'Queued edit discarded', detail: result.reason })
-            } },
-          ],
-        })
-      }
-    }
-  }
+async function createPendingReadonlyDocument(): Promise<void> {
+  if (!pendingReadonly) return
+  if (configurationState.kind === 'uninitialized' || configurationState.kind === 'initial-invalid' || !acceptedConfiguration) return
+  const documentValue = pendingReadonly
+  if (pendingReadonly !== documentValue) return
+  createReadonlyDocument(documentValue, acceptedConfiguration)
+  pendingReadonly = null
+  activeDocumentId = documentValue.documentId
+  setWebviewState(initializeWebviewSession(webviewState, documentValue.documentId, 'readonly'))
+  showComparisonPresentation()
+  reportReadyEditors([documentValue.documentId])
+  refreshToggleLabel()
+}
 
+async function handleHostMessage(msg: HostMessage): Promise<void> {
   switch (msg.type) {
+    case 'draft-snapshot': {
+      if (msg.uri !== activeDocumentId && activeDocumentId !== null) break
+      draftGeneration = msg.generation
+      const view = configurationState.kind === 'active' ? configurationState.view : null
+      isExternalUpdate = true
+      if (view) setEditorContent(view, msg.content, msg.selection)
+      isExternalUpdate = false
+      document.body.dataset.dirty = String(msg.dirty)
+      document.body.dataset.externalConflict = String(msg.externalChange !== null)
+      break
+    }
+
     case 'init': {
       try {
-        cancelPendingEdit()
         activeDocumentId = msg.documentId
-        activeDocumentVersion = msg.documentVersion ?? 0
+        draftGeneration = msg.documentVersion ?? 0
         setWebviewState(initializeWebviewSession(webviewState, msg.documentId, 'editing'))
         delete document.body.dataset.comparisonIdentity
         setBaseResourceUri(msg.baseResourceUri)
@@ -557,10 +477,8 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
       setBaseResourceUri(msg.result.value.modified.baseResourceUri)
       createComparison(msg.result.value, msg.configuration.value)
       acceptedConfiguration = msg.configuration.value
-      for (const side of ['original', 'modified'] as const) comparisonDocumentVersions.set(msg.result.value[side].documentId, msg.result.value[side].snapshot.provenance.documentVersion)
       reportReadyEditors([msg.result.value.original.documentId, msg.result.value.modified.documentId])
       document.body.dataset.comparisonOrigin = 'custom-editor-diff'
-      pendingComparison = null
       refreshToggleLabel()
       break
     }
@@ -576,15 +494,18 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
         showConfigurationFailure(msg.configuration.error)
         break
       }
-      showConfigurationFailure(msg.configuration.value.configurationFailure)
-      createReadonlyDocument(msg.document, msg.configuration.value)
-      acceptedConfiguration = msg.configuration.value
-      activeDocumentId = msg.document.documentId
-      setWebviewState(initializeWebviewSession(webviewState, msg.document.documentId, 'readonly'))
-      showComparisonPresentation()
-      reportReadyEditors([msg.document.documentId])
-      pendingReadonly = null
-      refreshToggleLabel()
+      const configuration = msg.configuration.value
+      showConfigurationFailure(configuration.configurationFailure)
+      acceptedConfiguration = configuration
+      if (pendingReadonly === msg.document) {
+        createReadonlyDocument(msg.document, configuration)
+        activeDocumentId = msg.document.documentId
+        setWebviewState(initializeWebviewSession(webviewState, msg.document.documentId, 'readonly'))
+        showComparisonPresentation()
+        reportReadyEditors([msg.document.documentId])
+        pendingReadonly = null
+        refreshToggleLabel()
+      }
       break
     }
 
@@ -592,14 +513,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
       if (comparisonState?.reveal(msg.documentId, msg.from, msg.to, msg.source)) break
       const view = readonlyView ?? (configurationState.kind === 'active' ? configurationState.view : null)
       if (view) revealTarget(view, msg.from, msg.to, msg.source)
-      break
-    }
-
-    case 'host-document-observation': {
-      if (acceptHostDocumentObservation(msg.observation)) {
-        document.body.dataset.externalUpdateCount = String(Number(document.body.dataset.externalUpdateCount ?? '0') + 1)
-        document.body.dataset.externalUpdateBytes = String(new TextEncoder().encode(msg.observation.content).byteLength)
-      }
       break
     }
 
@@ -631,22 +544,9 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
         showConfigurationFailure(msg.configuration.value.configurationFailure)
         break
       }
-      if (pendingComparison) {
-        const comparison = pendingComparison
-        createComparison(comparison, msg.configuration.value)
-        pendingComparison = null
-        showConfigurationFailure(msg.configuration.value.configurationFailure)
-        reportReadyEditors([comparison.original.documentId, comparison.modified.documentId])
-        refreshToggleLabel()
-        break
-      }
       if (pendingReadonly) {
-        const documentValue = pendingReadonly
-        createReadonlyDocument(documentValue, msg.configuration.value)
-        pendingReadonly = null
         showConfigurationFailure(msg.configuration.value.configurationFailure)
-        reportReadyEditors([documentValue.documentId])
-        refreshToggleLabel()
+        void createPendingReadonlyDocument()
         break
       }
       const before = configurationState
@@ -663,6 +563,7 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
     }
 
     case 'comparison-result': {
+      if (pendingComparisonIntent !== null) break
       const settled = settleComparison(webviewState, msg.requestId, msg.result)
       if (settled.effects.some(effect => effect.type === 'drop-invalid-event')) break
       setWebviewState(settled.state)
@@ -670,7 +571,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
       if (msg.result.ok) {
         showDiffFailure(null)
         setBaseResourceUri(msg.result.value.modified.baseResourceUri)
-        for (const side of ['original', 'modified'] as const) comparisonDocumentVersions.set(msg.result.value[side].documentId, msg.result.value[side].snapshot.provenance.documentVersion)
         let constructed = false
         if (comparisonState) {
           comparisonState.update(document.getElementById('editor')!, msg.result.value)
@@ -712,10 +612,3 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
 
 syncWebviewSessionDataset()
 postMessage({ type: 'ready' })
-
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault()
-    postMessage({ type: 'save' })
-  }
-})

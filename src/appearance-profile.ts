@@ -132,6 +132,9 @@ export const appearanceAssignments: readonly AppearanceAssignment[] = [
   { destination: cssDestination('--perwrite-table-widget-block-padding'), sources: ['perwrite.tableWidgetBlockPadding'], transform: 'css-value' },
   { destination: cssDestination('--perwrite-mermaid-block-padding'), sources: ['perwrite.mermaidBlockPadding'], transform: 'css-value' },
   { destination: cssDestination('--perwrite-mermaid-block-border'), sources: ['fixed.mermaidBlockBorderPx'], transform: 'css-value' },
+  { destination: metricDestination('editorWidthPx'), sources: ['perwrite.editorWidth'], transform: 'number' },
+  { destination: metricDestination('contentPaddingPx'), sources: ['perwrite.contentPadding'], transform: 'number' },
+  { destination: metricDestination('gutterGapPx'), sources: ['perwrite.gutterGap'], transform: 'number' },
   { destination: metricDestination('fontSizePx'), sources: ['editor.fontSize'], transform: 'number' },
   { destination: metricDestination('lineHeightMultiplier'), sources: ['perwrite.lineHeight'], transform: 'number' },
   { destination: metricDestination('lineHeightPx'), sources: ['editor.fontSize', 'perwrite.lineHeight'], transform: 'product' },
@@ -159,7 +162,12 @@ export function colorSourceTokens(): readonly string[] {
 }
 
 export interface AppearanceMetrics {
+  readonly editorWidthPx: number
+  readonly contentPaddingPx: number
+  readonly gutterGapPx: number
   readonly fontSizePx: number
+  readonly editorContentWidthPx: number
+  readonly logicalColumnWidthPx: number
   readonly lineHeightMultiplier: number
   readonly lineHeightPx: number
   readonly blockPaddingPx: number
@@ -462,7 +470,12 @@ export function resolveAppearanceProfile(input: AppearanceInput): Result<Appeara
       css[assignment.destination.name] = String(value)
     }
   }
-  const metrics = metricValues as AppearanceMetrics
+  const metricInputs = metricValues as Omit<AppearanceMetrics, 'editorContentWidthPx' | 'logicalColumnWidthPx'>
+  const metrics: AppearanceMetrics = {
+    ...metricInputs,
+    editorContentWidthPx: Math.max(1, metricInputs.editorWidthPx - 2 * metricInputs.contentPaddingPx - metricInputs.gutterGapPx),
+    logicalColumnWidthPx: metricInputs.fontSizePx,
+  }
   const normalizedTheme: ThemeData = { ...input.theme, colors: { ...input.theme.colors, ...colors.value } }
   return {
     ok: true,

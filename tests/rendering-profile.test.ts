@@ -5,6 +5,7 @@ import { decorationOptionsOf } from '../webview/editor/decoration-options'
 import { buildIrPresentation, editorFocused, irDecorationField } from '../webview/editor/ir-state-field'
 import { initialViewMode, viewModeField, type ViewMode } from '../webview/editor/view-mode'
 import {
+  completeMarkdownTreeField, initialCompleteMarkdownTree, markdownLezerParser,
   reconfigureRendering, renderingProfileField, renderingProfileExtensions,
 } from '../webview/editor/rendering-profile'
 import { MermaidWidget } from '../webview/nodes/mermaid-node'
@@ -28,7 +29,10 @@ function state(doc: string, mode: ViewMode, rendering = enabled): EditorState {
   return EditorState.create({
     doc,
     extensions: [
-      renderingProfileExtensions(rendering), editorFocused,
+      renderingProfileExtensions(rendering),
+      initialCompleteMarkdownTree.of(markdownLezerParser(rendering).parse(doc)),
+      completeMarkdownTreeField,
+      editorFocused,
       initialViewMode.of(mode), viewModeField, irDecorationField,
     ],
   })

@@ -30,9 +30,13 @@ const shikiReady = initShikiHighlighter({
   tokenColors: [],
 })
 const updates: string[] = []
+const activations: Array<{ readonly documentId: string; readonly destination: string }> = []
 const callbacks: EditorCallbacks = {
   onDocUpdate(content) {
     updates.push(content)
+  },
+  onLinkActivate(destination) {
+    activations.push({ documentId: 'standard-document', destination })
   },
 }
 
@@ -42,6 +46,7 @@ function reset(doc: string, anchor: number): void {
   view.destroy()
   root.replaceChildren()
   updates.length = 0
+  activations.length = 0
   view = createEditor(root, doc, callbacks, 'render', rendering)
   view.dispatch({
     selection: { anchor },
@@ -83,6 +88,8 @@ function codeBlockWrapWitness() {
     editorClientWidth: view.scrollDOM.clientWidth,
     editorScrollWidth: view.scrollDOM.scrollWidth,
     rectTops: [...new Set(rects.map(rect => Math.round(rect.top * 100) / 100))],
+    sourceLineCount: document.querySelectorAll('.cm-codeblock-line').length,
+    widgetCount: document.querySelectorAll('.cm-shiki-codeblock').length,
   }
 }
 
@@ -190,6 +197,56 @@ function syntaxRange(nodeName: string): { from: number; to: number } | null {
     },
   })
   return result
+}
+
+function linkActivationWitness() {
+  return [...activations]
+}
+
+function tableLinkActivationWitness(modifier: 'ctrl' | 'meta' | null): { readonly activations: readonly { readonly documentId: string; readonly destination: string }[]; readonly sourceVisible: boolean } {
+  const source = '| A | B |\n|---|---|\n| [open](child.md) | value |\n\nafter'
+  reset(source, source.length)
+  setMode('render')
+  const anchor = document.querySelector<HTMLAnchorElement>('.cm-table-widget a[data-link-destination]')
+  if (!anchor) return { activations: [], sourceVisible: false }
+  anchor.addEventListener('click', event => event.preventDefault(), { once: true })
+  anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: modifier === 'ctrl', metaKey: modifier === 'meta' }))
+  return { activations: [...activations], sourceVisible: document.querySelector('.cm-table-widget') !== null }
+}
+
+function tableWitness() {
+  const wrapper = document.querySelector<HTMLElement>('.cm-table-widget')
+  const table = wrapper?.querySelector<HTMLElement>('table') ?? null
+  const header = table?.querySelector<HTMLElement>('th') ?? null
+  const body = table?.querySelector<HTMLElement>('td') ?? null
+  const sourceLine = [...document.querySelectorAll<HTMLElement>('.cm-line')]
+    .find(element => element.textContent?.includes('| A | B |')) ?? null
+  const styleOf = (element: HTMLElement | null) => {
+    const style = element ? getComputedStyle(element) : null
+    return style ? {
+      paddingTop: style.paddingTop, paddingRight: style.paddingRight,
+      paddingBottom: style.paddingBottom, paddingLeft: style.paddingLeft,
+      marginTop: style.marginTop, marginRight: style.marginRight,
+      marginBottom: style.marginBottom, marginLeft: style.marginLeft,
+      backgroundColor: style.backgroundColor, borderTopLeftRadius: style.borderTopLeftRadius,
+    } : null
+  }
+  return {
+    snapshot: snapshot(),
+    widgetCount: document.querySelectorAll('.cm-table-widget').length,
+    tableClassCount: document.querySelectorAll('[class*="cm-table-"]').length,
+    wrapper: styleOf(wrapper), table: styleOf(table), header: styleOf(header), body: styleOf(body),
+    sourceLine: styleOf(sourceLine),
+  }
+}
+
+function setTableAppearance(blockPadding: number, inlinePadding: number, widgetPadding: number): void {
+  applyCssVariables(document.documentElement, {
+    '--perwrite-table-cell-block-padding': `${blockPadding}px`,
+    '--perwrite-table-cell-inline-padding': `${inlinePadding}px`,
+    '--perwrite-table-widget-block-padding': `${widgetPadding}px`,
+  } as PerwriteCssVariables)
+  invalidateEditorAppearance(view)
 }
 
 function clickCodeWidgetSource(
@@ -361,7 +418,11 @@ Object.assign(globalThis, {
     setSelection,
     reveal,
     syntaxRange,
+    tableWitness,
+    setTableAppearance,
     snapshot,
+    linkActivationWitness,
+    tableLinkActivationWitness,
     shikiWitness,
     searchRevealWitness,
     repeatRevealOnly,

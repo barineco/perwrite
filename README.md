@@ -2,7 +2,7 @@
 
 [日本語](README-ja.md)
 
-Perwrite is a Markdown editor extension for VS Code and compatible editors. It lets you edit Markdown while previewing rich rendering in the same editor surface.
+Perwrite is a Markdown editor extension for VS Code and compatible editors. It lets you edit Markdown and preview rich rendering in one editor.
 
 It renders:
 
@@ -19,13 +19,16 @@ It renders:
 1. Install Perwrite in VS Code or a compatible editor.
 2. Open a Markdown file.
 3. Use the buttons in the upper-right corner to switch view modes.
-4. Open [`docs/perwrite-showcase.md`](./docs/perwrite-showcase.md) to inspect the supported Markdown structures in one document.
+
+Perwrite provides three view modes:
 
 ```text
 raw
 rich
 render
 ```
+
+[`docs/perwrite-showcase.md`](./docs/perwrite-showcase.md) collects the supported Markdown structures and lets you inspect their result in each view mode.
 
 ## Supported environments
 
@@ -52,6 +55,11 @@ This setting controls visual wrapping for fenced code block lines.
 - Disabled: `false` preserves logical lines with horizontal scrolling inside the code block
 
 Inline code, Mermaid diagrams, KaTeX formulas, and tables retain their existing rendering.
+
+## Documentation
+
+- [Documentation index](./docs/en/INDEX.md)
+- [Editing architecture](./docs/en/architecture/overview.md)
 
 ## Contributing
 

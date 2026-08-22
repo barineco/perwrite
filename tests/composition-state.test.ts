@@ -76,4 +76,5 @@ describe('composition 状態', () => {
     expect(after.every((widget, index) => widget !== before[index])).toBe(true)
     expect(ended.doc.toString()).toBe(`日本${source}`)
   })
+
 })

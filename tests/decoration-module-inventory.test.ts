@@ -123,6 +123,23 @@ describe('Decoration module inventory', () => {
     }
   })
 
+  it('TableWidget 導出は専用 projection と viewport module を持たない', () => {
+    expect(existsSync(join(root, 'rich-table-projection.ts'))).toBe(false)
+    expect(existsSync(join(root, 'rich-table-viewport.ts'))).toBe(false)
+    const references = [
+      source('ir-state-field.ts'),
+      source('ir-display-derivation.ts'),
+      source('setup.ts'),
+      readFileSync(join(process.cwd(), 'webview/index.ts'), 'utf8'),
+      readFileSync(join(process.cwd(), 'webview/appearance.ts'), 'utf8'),
+      readFileSync(join(process.cwd(), 'webview/theme/styles.css'), 'utf8'),
+    ].join('\n')
+    expect(references).not.toMatch(/rich-table-(projection|viewport)|richTable|RichTable|TableProjection/)
+    expect(references).not.toMatch(/logicalViewportCapacity|tableHorizontalViewport|documentViewportAnchor|reconfigureLogicalViewportCapacity|cm-rich-table-/)
+    expect(references).toContain('TableWidget')
+    expect(references).toContain('invalidateEditorAppearances')
+  })
+
   it('Webview の resource URI 接続は image-widget を直接参照する', () => {
     const indexSource = readFileSync(join(process.cwd(), 'webview/index.ts'), 'utf8')
     expect(indexSource).toContain("import { setBaseResourceUri } from './editor/image-widget'")

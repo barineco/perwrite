@@ -42,7 +42,7 @@ vi.mock('vscode', () => ({
 function recordingAdapter() {
   const calls = {
     css: vi.fn(), shiki: vi.fn(async () => ({})), publish: vi.fn(() => true), dispose: vi.fn(),
-    mermaid: vi.fn(), metrics: vi.fn(), fonts: vi.fn(), invalidate: vi.fn(), failure: vi.fn(),
+    mermaid: vi.fn(), metrics: vi.fn(), invalidates: vi.fn(), fonts: vi.fn(), invalidate: vi.fn(), failure: vi.fn(),
   }
   const adapter: AppearanceAdapter = {
     applyCssVariables: calls.css,
@@ -51,6 +51,7 @@ function recordingAdapter() {
     disposeShikiTheme: calls.dispose,
     applyMermaidTheme: calls.mermaid,
     applyMetrics(metrics, version) { applyMetrics(metrics, version); calls.metrics(metrics, version) },
+    invalidateEditorAppearances: calls.invalidates,
     beginFontResourcePreparation: calls.fonts,
     invalidateWidgets: calls.invalidate,
     showFailure: calls.failure,
@@ -134,6 +135,7 @@ describe('appearance product dispatcher', () => {
     expect(calls.publish).toHaveBeenCalledOnce()
     expect(calls.mermaid).toHaveBeenCalledWith('dark')
     expect(calls.metrics).toHaveBeenCalledWith(profile.metrics, 7)
+    expect(calls.invalidates).toHaveBeenCalledOnce()
     expect(calls.invalidate).toHaveBeenCalledOnce()
     expect(calls.failure).toHaveBeenCalledWith(null)
   })

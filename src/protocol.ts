@@ -244,6 +244,7 @@ export type WebviewMessage =
   | { type: 'editor-ready'; documentIds: readonly string[] }
   | ({ type: 'draft-edit' } & DraftEdit)
   | { type: 'activate-link'; documentId: string; destination: string }
+  | { type: 'save'; documentId: string }
   | ComparisonRequest
 
 export function appearanceChangeMessage(appearance: AppearanceHostSources): HostMessage {

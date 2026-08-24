@@ -40,8 +40,15 @@ describe('Perwrite manifest', () => {
     })
   })
 
-  it('Markdown の Git commit 項目だけに command を登録する', () => {
-    expect(readManifest().contributes.menus['timeline/item/context']).toContainEqual({
+  it('保存する比較入口だけを manifest に登録する', () => {
+    const menus = readManifest().contributes.menus
+    expect(menus['scm/resourceState/context']).toBeUndefined()
+    expect(menus['scm/historyItem/context']).toContainEqual({
+      command: 'perwrite.openCommitComparison',
+      when: 'scmProvider == git',
+      group: 'inline',
+    })
+    expect(menus['timeline/item/context']).toContainEqual({
       command: 'perwrite.openCommitComparison',
       when: 'timelineItem =~ /git:file:commit\\b/ && resourceExtname == .md',
       group: 'inline',

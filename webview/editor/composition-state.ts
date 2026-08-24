@@ -15,6 +15,19 @@ export const compositionActiveField = StateField.define<boolean>({
   },
 })
 
+export const compositionBaselineField = StateField.define<string | null>({
+  create() {
+    return null
+  },
+  update(baseline, transaction) {
+    for (const effect of transaction.effects) {
+      if (!effect.is(setCompositionActiveEffect)) continue
+      return effect.value ? transaction.startState.doc.toString() : null
+    }
+    return baseline
+  },
+})
+
 export const compositionEventHandlers = EditorView.domEventHandlers({
   compositionstart(_event, view) {
     view.dispatch({ effects: setCompositionActiveEffect.of(true) })

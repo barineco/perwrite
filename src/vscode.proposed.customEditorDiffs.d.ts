@@ -1,14 +1,14 @@
 import type * as vscode from 'vscode'
 
 declare module 'vscode' {
-  interface CustomEditorDiffDocuments {
-    readonly original: vscode.TextDocument
-    readonly modified: vscode.TextDocument
+  interface CustomEditorInlineDiffDocuments<T extends vscode.CustomDocument> {
+    readonly original: T
+    readonly modified: T
   }
 
-  interface CustomTextEditorProvider {
-    resolveCustomTextEditorInlineDiff?(
-      documents: CustomEditorDiffDocuments,
+  interface CustomEditorProvider<T extends vscode.CustomDocument> {
+    resolveCustomEditorInlineDiff?(
+      documents: CustomEditorInlineDiffDocuments<T>,
       webviewPanel: vscode.WebviewPanel,
       token: vscode.CancellationToken,
     ): void | Thenable<void>

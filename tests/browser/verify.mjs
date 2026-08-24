@@ -26,12 +26,13 @@ await runBrowserTest({
   const initial = await page.evaluate(() => ({
     views: document.querySelectorAll('.comparison-side .cm-editor').length,
     labels: [...document.querySelectorAll('.comparison-label')].map(element => element.textContent),
-    deleted: document.querySelectorAll('.comparison-original .cm-comparison-deleted, .comparison-original .cm-comparison-changed').length,
-    added: document.querySelectorAll('.comparison-modified .cm-comparison-added, .comparison-modified .cm-comparison-changed').length,
+    removed: document.querySelectorAll('.comparison-original .cm-comparison-removed').length,
+    inserted: document.querySelectorAll('.comparison-modified .cm-comparison-inserted').length,
     deletedWidgets: document.querySelectorAll('.cm-deletedChunk').length,
   }))
   check('左右に一つずつ EditorView を構築する', initial.views === 2 && initial.labels.join('|') === 'HEAD|Working Tree', JSON.stringify(initial))
-  check('左右へ独立した差分行を描画する', initial.deleted > 0 && initial.added > 0 && initial.deletedWidgets === 0, JSON.stringify(initial))
+  check('旧文書の変更行を removed、新文書の変更行を inserted として描画する',
+    initial.removed > 0 && initial.inserted > 0 && initial.deletedWidgets === 0, JSON.stringify(initial))
 
   await page.click('#mode-rich')
   check('左右へ同じ rich 表示を適用する', await page.locator('.comparison-side .cm-strong').count() === 0)
@@ -41,16 +42,14 @@ await runBrowserTest({
       return element ? getComputedStyle(element).backgroundColor : null
     }
     return {
-      added: background('.cm-comparison-added .cm-inline-code'),
-      changed: background('.cm-comparison-changed .cm-inline-code'),
-      deleted: background('.cm-comparison-deleted .cm-inline-code'),
+      removed: background('.comparison-original .cm-comparison-removed .cm-inline-code'),
+      inserted: background('.comparison-modified .cm-comparison-inserted .cm-inline-code'),
     }
   })
-  check('added と changed の行内 code に inserted 派生色を適用する',
-    inlineCodeBackgrounds.added === 'rgb(32, 144, 72)' && inlineCodeBackgrounds.changed === 'rgb(32, 144, 72)',
-    JSON.stringify(inlineCodeBackgrounds))
-  check('deleted の行内 code に removed 派生色を適用する',
-    inlineCodeBackgrounds.deleted === 'rgb(144, 32, 136)', JSON.stringify(inlineCodeBackgrounds))
+  check('旧文書の行内 code に removed 派生色を適用する',
+    inlineCodeBackgrounds.removed === 'rgb(144, 32, 136)', JSON.stringify(inlineCodeBackgrounds))
+  check('新文書の行内 code に inserted 派生色を適用する',
+    inlineCodeBackgrounds.inserted === 'rgb(32, 144, 72)', JSON.stringify(inlineCodeBackgrounds))
   await page.click('#mode-render')
   await page.waitForSelector('.comparison-side .cm-katex-block')
   await page.waitForFunction(() =>

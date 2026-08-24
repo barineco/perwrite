@@ -30,10 +30,14 @@ const shikiReady = initShikiHighlighter({
   tokenColors: [],
 })
 const updates: string[] = []
+const changes: Array<{ readonly before: string; readonly after: string; readonly selection: number }> = []
 const activations: Array<{ readonly documentId: string; readonly destination: string }> = []
 const callbacks: EditorCallbacks = {
   onDocUpdate(content) {
     updates.push(content)
+  },
+  onChanges(_changes, view, before, after) {
+    changes.push({ before, after, selection: view.state.selection.main.head })
   },
   onLinkActivate(destination) {
     activations.push({ documentId: 'standard-document', destination })
@@ -46,6 +50,7 @@ function reset(doc: string, anchor: number): void {
   view.destroy()
   root.replaceChildren()
   updates.length = 0
+  changes.length = 0
   activations.length = 0
   view = createEditor(root, doc, callbacks, 'render', rendering)
   view.dispatch({
@@ -119,6 +124,7 @@ function snapshot() {
     compositionActive: view.state.field(compositionActiveField),
     undoDepth: undoDepth(view.state),
     updates: [...updates],
+    changes: [...changes],
   }
 }
 

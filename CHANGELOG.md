@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.37
+
+- Preserves unsaved drafts across external snapshots, undo, redo, and IME composition
+- Presents Git comparison with removed colors on the original side and inserted colors on the modified side
+
 ## 0.0.33
 
 - Completes Markdown parsing before deriving rich tables in long documents

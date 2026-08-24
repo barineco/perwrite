@@ -213,13 +213,6 @@ function requestComparison(original: GitRevision, modified: GitRevision): void {
   beginPendingComparison(token)
 }
 
-function setDiffControlAvailable(available: boolean): void {
-  const control = document.getElementById('toggle-diff') as HTMLButtonElement | null
-  if (!control) return
-  control.hidden = !available
-  control.disabled = !available
-}
-
 function setupControls(): void {
   if (controlsInitialized) return
   controlsInitialized = true
@@ -230,10 +223,6 @@ function setupControls(): void {
     if (comparisonState) comparisonState.setMode(next)
     else currentView()?.dispatch({ effects: setViewModeEffect.of(next) })
     refreshToggleLabel()
-  })
-  document.getElementById('toggle-diff')?.addEventListener('click', event => {
-    if ((event.currentTarget as HTMLButtonElement).disabled) return
-    requestComparison({ kind: 'commit', ref: 'HEAD' }, { kind: 'working-tree' })
   })
   document.getElementById('apply-comparison')?.addEventListener('click', () => {
     const original = revisionFromInput((document.getElementById('comparison-original') as HTMLInputElement).value)
@@ -409,6 +398,11 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
       const view = configurationState.kind === 'active' ? configurationState.view : null
       isExternalUpdate = true
       if (view) setEditorContent(view, msg.content, msg.selection)
+      if (comparisonState) {
+        for (const side of ['original', 'modified'] as const) {
+          if (comparisonState.documentIdForSide(side) === msg.uri) comparisonState.updateContent(side, msg.content)
+        }
+      }
       isExternalUpdate = false
       document.body.dataset.dirty = String(msg.dirty)
       document.body.dataset.externalConflict = String(msg.externalChange !== null)
@@ -423,7 +417,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
         delete document.body.dataset.comparisonIdentity
         setBaseResourceUri(msg.baseResourceUri)
         setupControls()
-        setDiffControlAvailable(true)
         setupThemeObserver()
         const validConfiguration = msg.configuration.ok ? msg.configuration.value : null
 
@@ -450,7 +443,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
 
     case 'comparison-init': {
       setupControls()
-      setDiffControlAvailable(true)
       setupThemeObserver()
       await applyAppearanceFromSources(msg.appearance)
       if (!msg.configuration.ok) {
@@ -458,6 +450,13 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
         showDiffFailure(msg.result.ok ? { title: 'Comparison unavailable', detail: 'Comparison configuration is unavailable' } : comparisonFailureDisplay(msg.result.error))
         break
       }
+      activeDocumentId = msg.result.ok && msg.result.value.editableSide
+        ? msg.result.value[msg.result.value.editableSide].documentId
+        : null
+      draftGeneration = msg.result.ok && msg.result.value.editableSide
+        ? msg.result.value[msg.result.value.editableSide].snapshot.provenance.kind === 'working-tree'
+          ? msg.result.value[msg.result.value.editableSide].snapshot.provenance.documentVersion : 0
+        : 0
       const initialized = transitionWebviewState(webviewState, {
         type: 'initialize-comparison',
         sessionIdentity: msg.result.ok ? msg.result.value.modified.documentId : webviewState.sessionIdentity,
@@ -469,7 +468,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
       showConfigurationFailure(msg.configuration.value.configurationFailure)
       if (!msg.result.ok) {
         showDiffFailure(comparisonFailureDisplay(msg.result.error))
-        setDiffControlAvailable(false)
         refreshToggleLabel()
         break
       }
@@ -485,7 +483,6 @@ async function handleHostMessage(msg: HostMessage): Promise<void> {
 
     case 'readonly-init': {
       setupControls()
-      setDiffControlAvailable(false)
       setupThemeObserver()
       await applyAppearanceFromSources(msg.appearance)
       setBaseResourceUri(msg.document.baseResourceUri)

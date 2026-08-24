@@ -6,7 +6,7 @@ import { decodeWebviewMessage } from './message-validation'
 import { createWebviewHtml } from '../webview/html-adapter'
 import { headingTarget, resolveLink } from './link-resolution'
 import { PerwriteDocument } from './perwrite-document'
-import { readRevisionSnapshot, revisionLabel, editableSideFor, type GitExtensionProvider } from './git-source'
+import { readRevisionSnapshot, resolveUriComparison, revisionLabel, editableSideFor, type GitExtensionProvider } from './git-source'
 import type { ComparisonResult, GitRevision, ResolvedGitComparison, RevisionSnapshot } from './protocol'
 
 export const APPEARANCE_CONFIGURATION_IDS = [
@@ -60,14 +60,40 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
     }))
   }
 
+  private registerDocument(document: PerwriteDocument): PerwriteDocument {
+    const key = document.uri.toString()
+    if (!this.documents.has(key)) {
+      this.documents.set(key, document)
+      document.onDidChange(event => this.customDocumentChanged.fire(event))
+    }
+    return this.documents.get(key)!
+  }
+
+  private async durableDocument(uri: vscode.Uri): Promise<PerwriteDocument> {
+    const existing = this.documents.get(uri.toString())
+    return existing ?? this.registerDocument(await PerwriteDocument.open(uri))
+  }
+
   async openCustomDocument(uri: vscode.Uri, openContext: { readonly backupId?: string }): Promise<PerwriteDocument> {
-    const document = await PerwriteDocument.open(uri, openContext.backupId)
-    this.documents.set(uri.toString(), document)
-    document.onDidChange(event => this.customDocumentChanged.fire(event))
-    return document
+    return this.registerDocument(await PerwriteDocument.open(uri, openContext.backupId))
   }
 
   async resolveCustomEditor(document: PerwriteDocument, panel: vscode.WebviewPanel): Promise<void> {
+    await this.resolveEditorSession(this.registerDocument(document), panel)
+  }
+
+  async resolveCustomEditorInlineDiff(documents: vscode.CustomEditorInlineDiffDocuments<PerwriteDocument>, panel: vscode.WebviewPanel, _token: vscode.CancellationToken): Promise<void> {
+    const original = this.registerDocument(documents.original)
+    const modified = this.registerDocument(documents.modified)
+    const resolved = resolveUriComparison(original.uri, modified.uri)
+    if (!resolved.ok) {
+      await this.resolveEditorSession(modified, panel, resolved)
+      return
+    }
+    await this.resolveEditorSession(modified, panel, await this.resolveProposedComparison({ original, modified }, modified, panel.webview))
+  }
+
+  private async resolveEditorSession(document: PerwriteDocument, panel: vscode.WebviewPanel, initialComparison: ComparisonResult<ResolvedGitComparison> | null = null): Promise<void> {
     const html = createWebviewHtml({ extensionUri: this.context.extensionUri, documentUri: document.uri, webview: panel.webview })
     panel.webview.options = { enableScripts: true, localResourceRoots: html.localResourceRoots }
     panel.webview.html = html.html
@@ -79,8 +105,13 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
       await panel.webview.postMessage({ type: 'draft-snapshot', uri: state.uri, content: state.draftSnapshot.content, contentHash: state.draftSnapshot.contentHash, selection: state.draftSnapshot.selection, generation: state.generation, dirty: document.isDirty, externalChange: state.externalChange?.content ?? null })
     }
     const postInitial = async (): Promise<void> => {
-      const state = document.documentState
       const appearance = await this.resolveCurrentAppearance()
+      if (initialComparison) {
+        await panel.webview.postMessage({ type: 'comparison-init', result: initialComparison, appearance, configuration: this.currentEditorConfiguration })
+        await postSnapshot()
+        return
+      }
+      const state = document.documentState
       await panel.webview.postMessage({ type: 'init', documentId: document.uri.toString(), content: state.draftSnapshot.content, documentVersion: state.generation, appearance, baseResourceUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(document.uri, '..')).toString(), configuration: this.currentEditorConfiguration })
       await postSnapshot()
     }
@@ -90,11 +121,24 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
       if (!decoded.ok) return
       const message = decoded.value
       if (message.type === 'ready') { session.ready = true; void postInitial(); return }
-      if (message.type === 'draft-edit') { if (!document.applyEdit(message)) void postSnapshot(); return }
+      if (message.type === 'draft-edit') { if (message.uri === document.uri.toString() && !document.applyEdit(message)) void postSnapshot(); return }
+      if (message.type === 'save') { if (message.documentId === document.uri.toString()) void document.save(); return }
       if (message.type === 'comparison-request') void this.resolveComparison(document, panel.webview, message.requestId, message.original, message.modified)
       if (message.type === 'activate-link') void this.activateLink(document, panel.webview, message.destination)
     }))
     panel.onDidDispose(() => { for (const disposable of session.dispose) disposable.dispose(); this.sessions.delete(session) })
+  }
+
+  private async resolveProposedComparison(documents: vscode.CustomEditorInlineDiffDocuments<PerwriteDocument>, document: PerwriteDocument, webview: vscode.Webview): Promise<ComparisonResult<ResolvedGitComparison>> {
+    const resolved = resolveUriComparison(documents.original.uri, documents.modified.uri)
+    if (!resolved.ok) return resolved
+    const state = document.documentState
+    const working = { content: state.draftSnapshot.content, documentVersion: state.generation }
+    const read = (revision: GitRevision, side: 'original' | 'modified') => readRevisionSnapshot(this.gitProvider(), vscode.Uri.file(resolved.value.actualFsPath), revision, side, revision.kind === 'working-tree' ? working : undefined)
+    const left = await read(resolved.value.comparison.original, 'original'); if (!left.ok) return left
+    const right = await read(resolved.value.comparison.modified, 'modified'); if (!right.ok) return right
+    const base = webview.asWebviewUri(vscode.Uri.joinPath(document.uri, '..')).toString()
+    return { ok: true, value: { identity: `${documents.original.uri.toString()}::${documents.modified.uri.toString()}`, original: this.resolvedSide(left.value, base, left.value.revisionIdentity.kind === 'working-tree' ? document.uri.toString() : documents.original.uri.toString()), modified: this.resolvedSide(right.value, base, right.value.revisionIdentity.kind === 'working-tree' ? document.uri.toString() : documents.modified.uri.toString()), editableSide: editableSideFor(resolved.value.comparison.original, resolved.value.comparison.modified) } }
   }
 
   async saveCustomDocument(document: PerwriteDocument): Promise<void> {
@@ -125,7 +169,7 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
 
   private gitProvider(): GitExtensionProvider { return { getExtension: id => vscode.extensions.getExtension(id) as ReturnType<GitExtensionProvider['getExtension']> } }
   private comparisonFailure(kind: import('./protocol').ComparisonFailure['kind'], side: 'original' | 'modified' | null, target: string, detail: string): ComparisonResult<never> { return { ok: false, error: { kind, side, target, detail } } }
-  private resolvedSide(snapshot: RevisionSnapshot, baseResourceUri: string) { return { snapshot, label: revisionLabel(snapshot.revisionIdentity.kind === 'commit' ? { kind: 'commit' as const, ref: snapshot.provenance.kind === 'commit' ? snapshot.provenance.requestedRef : snapshot.revisionIdentity.fullHash } : { kind: snapshot.revisionIdentity.kind }), documentId: `${snapshot.physicalUri}?revision=${snapshot.revisionIdentity.kind === 'commit' ? snapshot.revisionIdentity.fullHash : snapshot.revisionIdentity.kind}`, baseResourceUri } }
+  private resolvedSide(snapshot: RevisionSnapshot, baseResourceUri: string, documentId?: string) { return { snapshot, label: revisionLabel(snapshot.revisionIdentity.kind === 'commit' ? { kind: 'commit' as const, ref: snapshot.provenance.kind === 'commit' ? snapshot.provenance.requestedRef : snapshot.revisionIdentity.fullHash } : { kind: snapshot.revisionIdentity.kind }), documentId: documentId ?? (snapshot.revisionIdentity.kind === 'working-tree' ? snapshot.physicalUri : `${snapshot.physicalUri}?revision=${snapshot.revisionIdentity.kind === 'commit' ? snapshot.revisionIdentity.fullHash : snapshot.revisionIdentity.kind}`), baseResourceUri } }
   private async resolveComparison(document: PerwriteDocument, webview: vscode.Webview, requestId: number, original: GitRevision, modified: GitRevision): Promise<void> {
     const state = document.documentState
     const working = { content: state.draftSnapshot.content, documentVersion: state.generation }
@@ -134,7 +178,7 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
     if (!left.ok || !right.ok) { await webview.postMessage({ type: 'comparison-result', requestId, result: !left.ok ? left : right }); return }
     if (left.value.contentHash === right.value.contentHash && original.kind === modified.kind) { await webview.postMessage({ type: 'comparison-result', requestId, result: this.comparisonFailure('comparison-unresolved', null, revisionLabel(original), 'Comparison sides use the same revision') }); return }
     const base = webview.asWebviewUri(vscode.Uri.joinPath(document.uri, '..')).toString()
-    const result: ComparisonResult<ResolvedGitComparison> = { ok: true, value: { identity: `${requestId}:${document.uri.toString()}`, original: this.resolvedSide(left.value, base), modified: this.resolvedSide(right.value, base), editableSide: editableSideFor(original, modified) } }
+    const result: ComparisonResult<ResolvedGitComparison> = { ok: true, value: { identity: `${requestId}:${document.uri.toString()}`, original: this.resolvedSide(left.value, base, left.value.revisionIdentity.kind === 'working-tree' ? document.uri.toString() : undefined), modified: this.resolvedSide(right.value, base, right.value.revisionIdentity.kind === 'working-tree' ? document.uri.toString() : undefined), editableSide: editableSideFor(original, modified) } }
     await webview.postMessage({ type: 'comparison-result', requestId, result })
   }
 

@@ -4,11 +4,12 @@ const runtime = vi.hoisted(() => {
   class Uri {
     constructor(readonly value: string) {}
     static joinPath(uri: Uri, ...parts: string[]) { return new Uri([uri.value, ...parts].join('/')) }
+    static file(value: string) { return new Uri(value.startsWith('file:') ? value : `file:${value}`) }
     toString() { return this.value }
     get path() { return this.value }
   }
   const configurationListeners: Array<(event: { affectsConfiguration(id: string): boolean }) => void> = []
-  return { Uri, configurationListeners }
+  return { Uri, configurationListeners, openDocument: undefined as any }
 })
 
 vi.mock('vscode', () => ({
@@ -22,11 +23,18 @@ vi.mock('vscode', () => ({
   commands: { executeCommand: vi.fn() },
 }))
 
-vi.mock('../src/perwrite-document', () => ({ PerwriteDocument: { open: vi.fn() } }))
+vi.mock('../src/perwrite-document', () => ({ PerwriteDocument: { open: vi.fn(async () => runtime.openDocument) } }))
+vi.mock('../src/git-source', () => ({
+  resolveUriComparison: vi.fn(() => ({ ok: true, value: { actualFsPath: 'file:note.md', comparison: { original: { kind: 'index' }, modified: { kind: 'working-tree' } } } })),
+  readRevisionSnapshot: vi.fn(async (_provider: unknown, _uri: unknown, revision: any, _side: unknown, working?: any) => ({ ok: true, value: revision.kind === 'working-tree' ? { physicalUri: 'file:note.md', revisionIdentity: { kind: 'working-tree' }, content: working.content, contentHash: 'draft', provenance: { kind: 'working-tree', documentVersion: working.documentVersion } } : { physicalUri: 'file:note.md', revisionIdentity: { kind: 'index' }, content: 'Index', contentHash: 'index', provenance: { kind: 'index', documentVersion: 0 } } })),
+  revisionLabel: (revision: any) => revision.kind === 'working-tree' ? 'Working Tree' : revision.kind === 'index' ? 'Index' : revision.ref,
+  editableSideFor: (original: any, modified: any) => original.kind === 'working-tree' ? 'original' : modified.kind === 'working-tree' ? 'modified' : null,
+}))
 
 import { PerwriteEditorProvider } from '../src/editor-provider'
 
 interface MockPanel {
+  dispose(): void
   readonly webview: {
     options: unknown
     html: string
@@ -40,6 +48,7 @@ interface MockPanel {
 
 function panel(): MockPanel {
   let receive = (_message: unknown) => {}
+  let disposePanel = () => {}
   const webview = {
     options: undefined as unknown,
     html: '',
@@ -48,11 +57,12 @@ function panel(): MockPanel {
     postMessage: vi.fn(async (message: unknown) => { webview.messages.push(message); return true }),
     onDidReceiveMessage: (listener: (message: unknown) => void) => { receive = listener; return { dispose() {} } },
   }
-  return { webview, receive: message => receive(message), onDidDispose: () => ({ dispose() {} }) } as unknown as MockPanel
+  return { webview, receive: message => receive(message), dispose: () => disposePanel(), onDidDispose: (listener: () => void) => { disposePanel = listener; return { dispose() {} } } } as unknown as MockPanel
 }
 
 function document() {
   const stateListeners: Array<() => void> = []
+  const stateSubscription = { dispose: vi.fn() }
   const state = {
     uri: 'file:note.md', generation: 3,
     savedSnapshot: { content: 'Saved', contentHash: 'saved', selection: [] },
@@ -61,9 +71,10 @@ function document() {
   }
   return {
     uri: new runtime.Uri('file:note.md'), documentState: state, isDirty: true,
-    onDidChange: () => ({ dispose() {} }),
-    onDidChangeState: (listener: () => void) => { stateListeners.push(listener); return { dispose() {} } },
+    onDidChange: vi.fn(() => ({ dispose() {} })),
+    onDidChangeState: vi.fn((listener: () => void) => { stateListeners.push(listener); return stateSubscription }),
     applyEdit: vi.fn(() => false),
+    save: vi.fn(async () => null),
   }
 }
 
@@ -71,6 +82,29 @@ async function flush(): Promise<void> { await new Promise(resolve => setTimeout(
 
 describe('PerwriteEditorProvider sessions', () => {
   beforeEach(() => { runtime.configurationListeners.length = 0 })
+
+  it('resolves proposal documents into comparison-init, edits the durable working tree, and refuses the revision side', async () => {
+    const provider = new PerwriteEditorProvider({ extensionUri: new runtime.Uri('file:extension'), subscriptions: [] } as any)
+    const original = document(); original.uri = new runtime.Uri('git:note.md')
+    const modified = document(); modified.applyEdit.mockReturnValue(true); runtime.openDocument = modified
+    const inline = panel()
+    await provider.resolveCustomEditorInlineDiff({ original, modified } as any, inline as any, {} as any)
+    inline.receive({ type: 'ready' }); await flush()
+    const init = inline.webview.messages.find((message: any) => message.type === 'comparison-init') as any
+    expect(init.result.value.modified.snapshot.content).toBe('Draft')
+    expect(init.result.value.modified.documentId).toBe('file:note.md')
+    expect(init.result.value.editableSide).toBe('modified')
+    expect(original.onDidChange).toHaveBeenCalledTimes(1)
+    expect(modified.onDidChange).toHaveBeenCalledTimes(1)
+    inline.receive({ type: 'draft-edit', uri: 'file:note.md', generation: 3, beforeHash: 'draft', changes: [], selection: [0, 0] })
+    inline.receive({ type: 'draft-edit', uri: 'file:note.md?revision=index', generation: 3, beforeHash: 'index', changes: [], selection: [] })
+    inline.receive({ type: 'save', documentId: 'file:note.md' })
+    await flush()
+    expect(modified.applyEdit).toHaveBeenCalledTimes(1)
+    expect(modified.save).toHaveBeenCalledTimes(1)
+    inline.dispose()
+    expect(modified.onDidChangeState.mock.results[0].value.dispose).toHaveBeenCalledTimes(1)
+  })
 
   it('broadcasts an identical canonical snapshot to each ready session and resynchronizes a rejected edit', async () => {
     const provider = new PerwriteEditorProvider({ extensionUri: new runtime.Uri('file:extension'), subscriptions: [] } as any)

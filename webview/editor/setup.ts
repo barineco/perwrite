@@ -1,5 +1,5 @@
 import { EditorView, keymap, drawSelection } from '@codemirror/view'
-import { Compartment, EditorSelection, EditorState, Facet, Transaction, type ChangeSet, type Extension, type StateEffect } from '@codemirror/state'
+import { ChangeSet, Compartment, EditorSelection, EditorState, Facet, Transaction, type Extension, type StateEffect } from '@codemirror/state'
 import { defaultKeymap } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
 import { closeSearchPanel, search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
@@ -11,7 +11,7 @@ import { perwriteTheme } from './theme'
 import { blockLineNumbers } from './block-line-numbers'
 import { linkDestination, wikilinkTarget } from './markdown-node-values'
 import { completeMarkdownTreeField, initialCompleteMarkdownTree, markdownLezerParser, renderingProfileExtensions } from './rendering-profile'
-import { compositionActiveField, compositionEventHandlers } from './composition-state'
+import { compositionActiveField, compositionBaselineField, compositionEventHandlers, setCompositionActiveEffect } from './composition-state'
 import { imageDocumentGeneration, imagePreparationExtension } from './image-widget'
 import { mermaidGeometryPreparationExtension } from './mermaid-geometry-preparation'
 import { searchRevealExtension, setRevealTargetEffect } from './search-reveal'
@@ -121,6 +121,7 @@ export function createEditor(
           profileFor(state.field(viewModeField)).editable && state.facet(editorEditable)),
         irFocusHandler,
         compositionActiveField,
+        compositionBaselineField,
         initialCompleteMarkdownTree.of(completeTree),
         completeMarkdownTreeField,
         irDecorationField,
@@ -151,8 +152,31 @@ export function createEditor(
         }),
 
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            callbacks.onDocUpdate?.(update.state.doc.toString())
+          if (update.docChanged) callbacks.onDocUpdate?.(update.state.doc.toString())
+
+          const compositionEnded = update.transactions.some(transaction =>
+            transaction.effects.some(effect => effect.is(setCompositionActiveEffect) && !effect.value))
+          if (compositionEnded) {
+            const beforeContent = update.startState.field(compositionBaselineField, false)
+            const afterContent = update.state.doc.toString()
+            if (typeof beforeContent === 'string' && beforeContent !== afterContent) {
+              let prefixLength = 0
+              const minimumLength = Math.min(beforeContent.length, afterContent.length)
+              while (prefixLength < minimumLength && beforeContent[prefixLength] === afterContent[prefixLength]) prefixLength++
+              let suffixLength = 0
+              while (suffixLength < minimumLength - prefixLength
+                && beforeContent[beforeContent.length - 1 - suffixLength] === afterContent[afterContent.length - 1 - suffixLength]) suffixLength++
+              const changes = ChangeSet.of([{
+                from: prefixLength,
+                to: beforeContent.length - suffixLength,
+                insert: afterContent.slice(prefixLength, afterContent.length - suffixLength),
+              }], beforeContent.length)
+              callbacks.onChanges?.(changes, update.view, beforeContent, afterContent)
+            }
+            return
+          }
+
+          if (update.docChanged && !update.startState.field(compositionActiveField, false)) {
             callbacks.onChanges?.(update.changes, update.view, update.startState.doc.toString(), update.state.doc.toString())
           }
         }),

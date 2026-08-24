@@ -24,15 +24,11 @@ function changedLineRanges(state: Parameters<Parameters<typeof StateField.define
     const from = side === 'original' ? chunk.originalFrom : chunk.modifiedFrom
     const to = side === 'original' ? chunk.originalTo : chunk.modifiedTo
     if (from === to) continue
-    const otherFrom = side === 'original' ? chunk.modifiedFrom : chunk.originalFrom
-    const otherTo = side === 'original' ? chunk.modifiedTo : chunk.originalTo
-    const kind = otherFrom === otherTo
-      ? side === 'original' ? 'deleted' : 'added'
-      : 'changed'
+    const meaning = side === 'original' ? 'removed' : 'inserted'
     let line = state.doc.lineAt(Math.min(from, state.doc.length))
     const end = Math.min(to, state.doc.length)
     while (true) {
-      ranges.push(Decoration.line({ class: `cm-comparison-${kind}` }).range(line.from))
+      ranges.push(Decoration.line({ class: `cm-comparison-${meaning}` }).range(line.from))
       if (line.to >= end || line.number === state.doc.lines) break
       line = state.doc.line(line.number + 1)
     }

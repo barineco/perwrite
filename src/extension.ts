@@ -65,26 +65,6 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
     vscode.commands.registerCommand('perwrite.revealTarget', (...args: unknown[]) => provider.revealTarget(...args)),
-    vscode.commands.registerCommand('perwrite.openGitComparison', async (
-      resource?: vscode.Uri | { readonly resourceUri: vscode.Uri },
-    ) => {
-      const selectedUri = resource instanceof vscode.Uri
-        ? resource
-        : resource?.resourceUri ?? vscode.window.activeTextEditor?.document.uri
-      if (!selectedUri) {
-        void vscode.window.showWarningMessage('Open a working-tree Markdown document before starting a Git comparison.')
-        return
-      }
-      const documentUri = physicalDocumentUri(selectedUri)
-      if (!documentUri) {
-        void vscode.window.showWarningMessage('Open a working-tree Markdown document before starting a Git comparison.')
-        return
-      }
-      const indexUri = gitDocumentUri(documentUri, '')
-      await vscode.commands.executeCommand(
-        'vscode.diff', indexUri, documentUri, `${vscode.workspace.asRelativePath(documentUri)} (Index ↔ Working Tree)`,
-      )
-    }),
     vscode.commands.registerCommand('perwrite.openCommitComparison', async (...args: unknown[]) => {
       const input = resolveCommitComparisonInput(args)
       if (!input.ok) {

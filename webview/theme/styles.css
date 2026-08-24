@@ -122,15 +122,11 @@ body.comparing .comparison-targets {
   min-height: 0;
 }
 
-.cm-comparison-deleted {
+.cm-comparison-removed {
   background: var(--perwrite-diff-removed-background);
 }
 
-.cm-comparison-added {
-  background: var(--perwrite-diff-inserted-background);
-}
-
-.cm-comparison-changed {
+.cm-comparison-inserted {
   background: var(--perwrite-diff-inserted-background);
 }
 
@@ -208,13 +204,12 @@ body.comparing .comparison-targets {
   border-radius: 3px;
 }
 
-.cm-comparison-added .cm-inline-code,
-.cm-comparison-changed .cm-inline-code {
-  background: var(--perwrite-diff-inserted-codeblock-background);
+.cm-comparison-removed .cm-inline-code {
+  background: var(--perwrite-diff-removed-codeblock-background);
 }
 
-.cm-comparison-deleted .cm-inline-code {
-  background: var(--perwrite-diff-removed-codeblock-background);
+.cm-comparison-inserted .cm-inline-code {
+  background: var(--perwrite-diff-inserted-codeblock-background);
 }
 
 .cm-list-bullet {

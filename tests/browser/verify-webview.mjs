@@ -2,7 +2,7 @@ import { runBrowserTest } from './harness.mjs'
 
 await runBrowserTest({
   prefix: 'perwrite-webview-', entryPoint: 'tests/browser/host-scenario.ts', outfile: 'host.js', format: 'esm', target: 'es2022',
-  html: '<!doctype html><html><body><div id="toolbar"><button id="toggle-view">Render</button><button id="toggle-diff">Diff</button></div><div id="editor"></div><script type="module" src="/host.js"></script></body></html>', viewport: { width: 1000, height: 800 },
+  html: '<!doctype html><html><body><div id="toolbar"><button id="toggle-view">Render</button></div><div id="editor"></div><script type="module" src="/host.js"></script></body></html>', viewport: { width: 1000, height: 800 },
   async run(page, { check }) {
     await page.waitForFunction(() => globalThis.perwriteHost?.outbound.some(message => message.type === 'ready'))
     await page.evaluate(() => globalThis.perwriteHost.sendInit())

@@ -2,7 +2,7 @@
   "name": "perwrite",
   "displayName": "Perwrite",
   "description": "Obsidian-style inline Markdown editor with Mermaid, KaTeX, and Shiki highlighting",
-  "version": "0.0.36",
+  "version": "0.0.37",
   "publisher": "barineco",
   "license": "MIT",
   "repository": {
@@ -274,11 +274,6 @@
         "category": "Perwrite"
       },
       {
-        "command": "perwrite.openGitComparison",
-        "title": "Open Git Comparison",
-        "category": "Perwrite"
-      },
-      {
         "command": "perwrite.openCommitComparison",
         "title": "Open Commit Comparison",
         "category": "Perwrite"
@@ -289,13 +284,6 @@
         {
           "command": "perwrite.revealTarget",
           "when": "false"
-        }
-      ],
-      "scm/resourceState/context": [
-        {
-          "command": "perwrite.openGitComparison",
-          "when": "resourceExtname == .md",
-          "group": "inline"
         }
       ],
       "scm/historyItem/context": [

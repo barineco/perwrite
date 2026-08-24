@@ -855,10 +855,12 @@ await runBrowserTest({
     await client.send('Input.insertText', { text: '日本' })
     await waitForCompositionEnd()
     const composed = await snapshot()
-    check('IME composition は更新中と確定後の文書と selection を保存する',
-      composingOne.doc === 'a日b' && composingOne.ranges[0].head === 2 &&
-      composingTwo.doc === 'a日本b' && composingTwo.ranges[0].head === 3 &&
-      composed.doc === 'a日本b' && composed.ranges[0].head === 3 && !composed.compositionActive,
+    check('IME composition は中間 edit を Host へ送らず、確定結果と selection を一回配送する',
+      composingOne.doc === 'a日b' && composingOne.ranges[0].head === 2 && composingOne.changes.length === 0 &&
+      composingTwo.doc === 'a日本b' && composingTwo.ranges[0].head === 3 && composingTwo.changes.length === 0 &&
+      composed.doc === 'a日本b' && composed.ranges[0].head === 3 && !composed.compositionActive &&
+      composed.changes.length === 1 && composed.changes[0].before === 'ab' &&
+      composed.changes[0].after === 'a日本b' && composed.changes[0].selection === 3,
       JSON.stringify({ composingOne, composingTwo, composed }))
     await page.keyboard.press(`${modifier}+z`)
     const compositionUndo = await snapshot()

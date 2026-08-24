@@ -50,7 +50,6 @@ export function createWebviewHtml(input: WebviewHtmlInput): WebviewHtmlOutput {
     </div>
     <div class="toolbar-actions">
       <button id="toggle-view" class="toolbar-btn" title="Cycle view mode (raw / rich / render)">Render</button>
-      <button id="toggle-diff" class="toolbar-btn" title="Compare against HEAD">Diff</button>
     </div>
   </div>
   <div id="editor"></div>

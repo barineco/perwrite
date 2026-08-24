@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
-import { compositionActiveField, setCompositionActiveEffect } from '../webview/editor/composition-state'
+import { compositionActiveField, compositionBaselineField, setCompositionActiveEffect } from '../webview/editor/composition-state'
 import { decorationOptionsOf } from '../webview/editor/decoration-options'
 import { makeState } from './helpers'
 import { irDecorationField } from '../webview/editor/ir-state-field'
@@ -15,25 +15,33 @@ function widgets(state: EditorState): unknown[] {
 }
 
 describe('composition 状態', () => {
-  it('開始と終了の effect だけで状態を遷移する', () => {
-    const initial = EditorState.create({ extensions: [compositionActiveField] })
+  it('開始から終了までの baseline を StateField に保持する', () => {
+    const initial = EditorState.create({ doc: 'ab', extensions: [compositionActiveField, compositionBaselineField] })
     expect(initial.field(compositionActiveField)).toBe(false)
+    expect(initial.field(compositionBaselineField)).toBeNull()
 
     const active = initial.update({ effects: setCompositionActiveEffect.of(true) }).state
     expect(active.field(compositionActiveField)).toBe(true)
+    expect(active.field(compositionBaselineField)).toBe('ab')
 
     const changed = active.update({
-      changes: { from: 0, insert: '日本' },
+      changes: { from: 1, insert: '日' },
       selection: { anchor: 2 },
+      userEvent: 'input.type.compose',
+    }).state.update({
+      changes: { from: 1, to: 2, insert: '日本' },
+      selection: { anchor: 3 },
       userEvent: 'input.type.compose',
     }).state
     expect(changed.field(compositionActiveField)).toBe(true)
-    expect(changed.doc.toString()).toBe('日本')
-    expect(changed.selection.main.head).toBe(2)
+    expect(changed.field(compositionBaselineField)).toBe('ab')
+    expect(changed.doc.toString()).toBe('a日本b')
+    expect(changed.selection.main.head).toBe(3)
 
     const ended = changed.update({ effects: setCompositionActiveEffect.of(false) }).state
     expect(ended.field(compositionActiveField)).toBe(false)
-    expect(ended.doc.toString()).toBe('日本')
+    expect(ended.field(compositionBaselineField)).toBeNull()
+    expect(ended.doc.toString()).toBe('a日本b')
   })
 
   it('active 中は widget を changes で map し、終了時に現在の文書から再構築する', () => {

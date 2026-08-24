@@ -25,6 +25,20 @@ export function createDocumentState(uri: string, content: string): PerwriteDocum
   return { uri, savedSnapshot: initial, draftSnapshot: initial, externalChange: null, generation: 0 }
 }
 
+export function restoreDocumentState(
+  uri: string,
+  physical: DocumentSnapshot,
+  recovered: { readonly saved: DocumentSnapshot; readonly draft: DocumentSnapshot; readonly generation: number },
+): PerwriteDocumentState {
+  if (recovered.saved.contentHash === recovered.draft.contentHash) {
+    return { uri, savedSnapshot: physical, draftSnapshot: physical, externalChange: null, generation: recovered.generation }
+  }
+  if (physical.contentHash === recovered.saved.contentHash) {
+    return { uri, savedSnapshot: recovered.saved, draftSnapshot: recovered.draft, externalChange: null, generation: recovered.generation }
+  }
+  return { uri, savedSnapshot: physical, draftSnapshot: recovered.draft, externalChange: physical, generation: recovered.generation }
+}
+
 export function isDirty(state: PerwriteDocumentState): boolean {
   return state.draftSnapshot.contentHash !== state.savedSnapshot.contentHash
 }

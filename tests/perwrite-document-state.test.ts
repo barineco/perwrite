@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyDraftEdit, completeSave, createDocumentState, isDirty, observeExternalChange, restoreDraft, snapshot } from '../src/perwrite-document-state'
+import { applyDraftEdit, completeSave, createDocumentState, isDirty, observeExternalChange, restoreDocumentState, restoreDraft, snapshot } from '../src/perwrite-document-state'
 
 function edit(state: ReturnType<typeof createDocumentState>, insert: string) { return applyDraftEdit(state, { uri: state.uri, generation: state.generation, beforeHash: state.draftSnapshot.contentHash, changes: [{ from: state.draftSnapshot.content.length, to: state.draftSnapshot.content.length, insert }], selection: [] }) }
 
@@ -14,6 +14,19 @@ describe('durable draft state', () => {
     const first = edit(createDocumentState('file:a', 'a'), 'b'); if (!first.ok) throw new Error(first.error)
     expect(first.state.savedSnapshot.content).toBe('a')
     expect(restoreDraft(first.state, first.before).draftSnapshot.content).toBe('a')
+  })
+  it('Regression restores only dirty backups over the current physical snapshot', () => {
+    const clean = restoreDocumentState('file:a', snapshot('B'), { saved: snapshot('A'), draft: snapshot('A', [1, 1]), generation: 2 })
+    expect(clean).toMatchObject({ savedSnapshot: { content: 'B' }, draftSnapshot: { content: 'B' }, externalChange: null, generation: 2 })
+    expect(isDirty(clean)).toBe(false)
+
+    const matching = restoreDocumentState('file:a', snapshot('A'), { saved: snapshot('A'), draft: snapshot('D', [1, 0]), generation: 3 })
+    expect(matching).toMatchObject({ savedSnapshot: { content: 'A' }, draftSnapshot: { content: 'D', selection: [1, 0] }, externalChange: null, generation: 3 })
+    expect(isDirty(matching)).toBe(true)
+
+    const conflicting = restoreDocumentState('file:a', snapshot('B'), { saved: snapshot('A'), draft: snapshot('D', [1, 0]), generation: 4 })
+    expect(conflicting).toMatchObject({ savedSnapshot: { content: 'B' }, draftSnapshot: { content: 'D', selection: [1, 0] }, externalChange: { content: 'B' }, generation: 4 })
+    expect(isDirty(conflicting)).toBe(true)
   })
   it('Orthogonality applies clean external content but preserves dirty drafts as conflict', () => {
     const clean = observeExternalChange(createDocumentState('file:a', 'a'), snapshot('disk'))

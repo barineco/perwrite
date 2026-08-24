@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import { backupPayload, readBackup, readDocumentSnapshot, saveSnapshot, writeAndObserve, writeBackup, type SaveFailure } from './document-persistence'
-import { applyDraftEdit, createDocumentState, observeExternalChange, restoreDraft, revertTo, snapshot, type DocumentSnapshot, type PerwriteDocumentState } from './perwrite-document-state'
+import { applyDraftEdit, createDocumentState, observeExternalChange, restoreDocumentState, restoreDraft, revertTo, snapshot, type DocumentSnapshot, type PerwriteDocumentState } from './perwrite-document-state'
 import type { TextChange } from './protocol'
 
 export interface DocumentEdit { readonly uri: string; readonly generation: number; readonly beforeHash: string; readonly changes: readonly TextChange[]; readonly selection: readonly number[] }
@@ -27,9 +27,7 @@ export class PerwriteDocument implements vscode.CustomDocument {
     let state = createDocumentState(uri.toString(), physical.value.content)
     if (backupId) {
       const recovered = await readBackup(vscode.Uri.parse(backupId), uri.toString())
-      if (recovered) state = physical.value.contentHash === recovered.saved.contentHash
-        ? { uri: uri.toString(), savedSnapshot: recovered.saved, draftSnapshot: recovered.draft, externalChange: null, generation: recovered.generation }
-        : { uri: uri.toString(), savedSnapshot: physical.value, draftSnapshot: recovered.draft, externalChange: physical.value, generation: recovered.generation }
+      if (recovered) state = restoreDocumentState(uri.toString(), physical.value, recovered)
     }
     return new PerwriteDocument(uri, state)
   }

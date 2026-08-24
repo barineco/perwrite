@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.38
+
+- Uses the current file content when a clean editor backup predates an external update
+- Restores unsaved drafts while retaining externally changed content as a conflict
+
 ## 0.0.37
 
 - Preserves unsaved drafts across external snapshots, undo, redo, and IME composition

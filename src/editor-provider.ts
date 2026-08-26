@@ -45,7 +45,7 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
   private readonly customDocumentChanged = new EventEmitter<vscode.CustomDocumentEditEvent<PerwriteDocument>>()
   readonly onDidChangeCustomDocument = this.customDocumentChanged.event
   private readonly sessions = new Set<EditorSession>()
-  private readonly documents = new Map<string, PerwriteDocument>()
+  private readonly registeredDocuments = new WeakSet<PerwriteDocument>()
   private appearanceVersion = 0
   private configurationGeneration = 0
   private currentEditorConfiguration: ReturnType<typeof validateEditorConfiguration>
@@ -61,17 +61,11 @@ export class PerwriteEditorProvider implements vscode.CustomEditorProvider<Perwr
   }
 
   private registerDocument(document: PerwriteDocument): PerwriteDocument {
-    const key = document.uri.toString()
-    if (!this.documents.has(key)) {
-      this.documents.set(key, document)
+    if (!this.registeredDocuments.has(document)) {
+      this.registeredDocuments.add(document)
       document.onDidChange(event => this.customDocumentChanged.fire(event))
     }
-    return this.documents.get(key)!
-  }
-
-  private async durableDocument(uri: vscode.Uri): Promise<PerwriteDocument> {
-    const existing = this.documents.get(uri.toString())
-    return existing ?? this.registerDocument(await PerwriteDocument.open(uri))
+    return document
   }
 
   async openCustomDocument(uri: vscode.Uri, openContext: { readonly backupId?: string }): Promise<PerwriteDocument> {

@@ -35,6 +35,13 @@ describe('authored appearance styles', () => {
     expect(styles).toContain('padding: var(--perwrite-table-cell-block-padding) var(--perwrite-table-cell-inline-padding);')
   })
 
+  it('leaves inline replacement widgets in the CodeMirror line layout', () => {
+    const styles = source('../webview/theme/styles.css')
+    expect(styles).not.toMatch(/\.cm-content[^\{]*>\s*\.cm-widget\s*\{/s)
+    expect(styles).not.toMatch(/\.cm-widget\s*\{[^}]*display:\s*block/si)
+    expect(styles).not.toContain('.cm-widgetBuffer')
+  })
+
   it('draws block ranges through the CodeMirror gutter marker path', () => {
     const gutter = source('../webview/editor/block-line-numbers.ts')
     expect(gutter).toContain('widgetMarker(view, _widget, block)')

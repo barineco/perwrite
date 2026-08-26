@@ -2,7 +2,7 @@
   "name": "perwrite",
   "displayName": "Perwrite",
   "description": "Obsidian-style inline Markdown editor with Mermaid, KaTeX, and Shiki highlighting",
-  "version": "0.0.38",
+  "version": "0.0.39",
   "publisher": "barineco",
   "license": "MIT",
   "repository": {

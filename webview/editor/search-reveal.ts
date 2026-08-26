@@ -95,7 +95,9 @@ export const revealScrollPlugin = ViewPlugin.fromClass(class {
         const target = measured.state.field(revealTargetField)
         if (!target) return null
         const geometry = targetGeometry(measured, target)
-        if (!geometry) return null
+        // A distant target can be outside CodeMirror's rendered tiles. The
+        // scroll effect itself is the safe way to bring it into measurement.
+        if (!geometry) return { position: target.from, y: 'center' as const, yMargin: 0 }
         const band = safeBand(measured, geometry.lineHeight)
         if (geometry.top >= band.top && geometry.bottom <= band.bottom) return null
         // `coordsAtPos` returns client coordinates while scrollIntoView accepts a

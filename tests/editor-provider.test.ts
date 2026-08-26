@@ -106,6 +106,31 @@ describe('PerwriteEditorProvider sessions', () => {
     expect(modified.onDidChangeState.mock.results[0].value.dispose).toHaveBeenCalledTimes(1)
   })
 
+  it('uses the freshly opened physical snapshot when the same URI is reopened', async () => {
+    const provider = new PerwriteEditorProvider({ extensionUri: new runtime.Uri('file:extension'), subscriptions: [] } as any)
+    const firstDocument = document()
+    const reopenedDocument = document()
+    reopenedDocument.documentState.savedSnapshot = { content: 'External', contentHash: 'external', selection: [] }
+    reopenedDocument.documentState.draftSnapshot = { content: 'External', contentHash: 'external', selection: [] }
+    reopenedDocument.documentState.generation = 0
+    reopenedDocument.isDirty = false
+
+    runtime.openDocument = firstDocument
+    expect(await provider.openCustomDocument(firstDocument.uri, {})).toBe(firstDocument)
+    runtime.openDocument = reopenedDocument
+    const reopened = await provider.openCustomDocument(reopenedDocument.uri, {})
+    expect(reopened).toBe(reopenedDocument)
+
+    const reopenedPanel = panel()
+    await provider.resolveCustomEditor(reopened as any, reopenedPanel as any)
+    reopenedPanel.receive({ type: 'ready' })
+    await flush()
+    expect(reopenedPanel.webview.messages.find((message: any) => message.type === 'init')).toMatchObject({ content: 'External', documentVersion: 0 })
+    expect(reopenedPanel.webview.messages.find((message: any) => message.type === 'draft-snapshot')).toMatchObject({ content: 'External', contentHash: 'external', dirty: false })
+    expect(firstDocument.onDidChange).toHaveBeenCalledTimes(1)
+    expect(reopenedDocument.onDidChange).toHaveBeenCalledTimes(1)
+  })
+
   it('broadcasts an identical canonical snapshot to each ready session and resynchronizes a rejected edit', async () => {
     const provider = new PerwriteEditorProvider({ extensionUri: new runtime.Uri('file:extension'), subscriptions: [] } as any)
     const shared = document()

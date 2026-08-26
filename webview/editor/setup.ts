@@ -17,6 +17,7 @@ import { mermaidGeometryPreparationExtension } from './mermaid-geometry-preparat
 import { searchRevealExtension, setRevealTargetEffect } from './search-reveal'
 import { toggleTaskMarker } from './task-editing'
 import { linkActivation, type LinkActivation } from './link-activation'
+import { scrollContinuityExtension, suppressScrollContinuity } from './scroll-continuity'
 import type { RenderingProfile } from '../../src/protocol'
 
 export interface EditorCallbacks {
@@ -125,6 +126,7 @@ export function createEditor(
         initialCompleteMarkdownTree.of(completeTree),
         completeMarkdownTreeField,
         irDecorationField,
+        scrollContinuityExtension,
         irTransactionFilter,
         irKeymap,
         irMouseUpHandler,
@@ -232,6 +234,9 @@ export function setEditorContent(view: EditorView, newContent: string, selection
     changes: { from, to, insert },
     ...(nextSelection ? { selection: nextSelection } : {}),
     effects: view.scrollSnapshot(),
-    annotations: Transaction.addToHistory.of(false),
+    annotations: [
+      Transaction.addToHistory.of(false),
+      suppressScrollContinuity.of(true),
+    ],
   })
 }

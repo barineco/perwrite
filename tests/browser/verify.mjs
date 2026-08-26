@@ -120,51 +120,88 @@ await runBrowserTest({
 
   const preserved = await page.evaluate(async () => {
     const state = globalThis.comparisonScenario
+    const visibleAnchor = view => {
+      const scrollerTop = view.scrollDOM.getBoundingClientRect().top
+      for (let number = 1; number <= view.state.doc.lines; number += 1) {
+        const line = view.state.doc.line(number)
+        const coords = view.coordsAtPos(line.from)
+        if (coords && coords.bottom > scrollerTop) {
+          return { number, text: line.text, relativeTop: coords.top - scrollerTop }
+        }
+      }
+      return null
+    }
+    const waitForWidgets = frames => new Promise(resolve => {
+      const wait = remaining => remaining === 0 ? resolve() : requestAnimationFrame(() => wait(remaining - 1))
+      wait(frames)
+    })
     state.original.dispatch({ selection: { anchor: 17 } })
     state.modified.dispatch({ selection: { anchor: 29 } })
     const identities = [state.original.dom, state.modified.dom]
-    const scrolls = [state.original.scrollDOM.scrollTop, state.modified.scrollDOM.scrollTop]
+    const anchorsBefore = [visibleAnchor(state.original), visibleAnchor(state.modified)]
     document.querySelector('#tex-off').click()
     document.querySelector('#layout-dagre').click()
-    await new Promise(resolve => requestAnimationFrame(resolve))
+    await waitForWidgets(12)
+    const anchorsAfter = [visibleAnchor(state.original), visibleAnchor(state.modified)]
     return {
       identities: identities[0] === state.original.dom && identities[1] === state.modified.dom,
       selections: [state.original.state.selection.main.head, state.modified.state.selection.main.head],
-      scrollsBefore: scrolls,
-      scrollsAfter: [state.original.scrollDOM.scrollTop, state.modified.scrollDOM.scrollTop],
+      anchorsBefore,
+      anchorsAfter,
       mode: state.mode(),
       katex: document.querySelectorAll('.cm-katex-inline, .cm-katex-block').length,
     }
   })
-  check('描画設定変更で view・mode・選択・スクロールを保存する',
+  check('描画設定変更で view・mode・選択・source anchor の viewport 相対位置を保存する',
     preserved.identities && preserved.mode === 'render' && preserved.selections.join('|') === '17|29' &&
-    preserved.katex === 0 && preserved.scrollsAfter.every((value, index) => Math.abs(value - preserved.scrollsBefore[index]) < 2),
+    preserved.katex === 0 && preserved.anchorsBefore.every((anchor, index) =>
+      anchor && preserved.anchorsAfter[index] && anchor.number === preserved.anchorsAfter[index].number &&
+      anchor.text === preserved.anchorsAfter[index].text &&
+      Math.abs(anchor.relativeTop - preserved.anchorsAfter[index].relativeTop) < 10),
     JSON.stringify(preserved))
 
   await page.waitForTimeout(200)
   const targetChange = await page.evaluate(async () => {
     const state = globalThis.comparisonScenario
+    const visibleAnchor = view => {
+      const scrollerTop = view.scrollDOM.getBoundingClientRect().top
+      for (let number = 1; number <= view.state.doc.lines; number += 1) {
+        const line = view.state.doc.line(number)
+        const coords = view.coordsAtPos(line.from)
+        if (coords && coords.bottom > scrollerTop) {
+          return { number, text: line.text, relativeTop: coords.top - scrollerTop }
+        }
+      }
+      return null
+    }
+    const waitForWidgets = frames => new Promise(resolve => {
+      const wait = remaining => remaining === 0 ? resolve() : requestAnimationFrame(() => wait(remaining - 1))
+      wait(frames)
+    })
     const identities = [state.original.dom, state.modified.dom]
     const selections = [state.original.state.selection.main.head, state.modified.state.selection.main.head]
-    const scrolls = [state.original.scrollDOM.scrollTop, state.modified.scrollDOM.scrollTop]
+    const anchorsBefore = [visibleAnchor(state.original), visibleAnchor(state.modified)]
     state.update(document.querySelector('#editor'), {
       identity: 'browser-scenario-next', editableSide: 'modified',
       original: { snapshot: globalThis.comparisonSnapshot(state.original.state.doc.toString().replace('Original', 'Previous'), { kind: 'commit', fullHash: '1111111111111111111111111111111111111111' }, { kind: 'commit', requestedRef: 'HEAD~1', documentVersion: 0 }), label: 'HEAD~1', documentId: 'git:earlier', baseResourceUri: 'https://perwrite.test/' },
       modified: { snapshot: globalThis.comparisonSnapshot(state.modified.state.doc.toString().replace('Modified', 'Current_'), { kind: 'working-tree' }, { kind: 'working-tree', documentVersion: 1 }), label: 'Working Tree', documentId: 'file:modified', baseResourceUri: 'https://perwrite.test/' },
     })
-    await new Promise(resolve => requestAnimationFrame(resolve))
+    await waitForWidgets(4)
+    const anchorsAfter = [visibleAnchor(state.original), visibleAnchor(state.modified)]
     return {
       identities: identities[0] === state.original.dom && identities[1] === state.modified.dom,
       selectionsBefore: selections,
       selectionsAfter: [state.original.state.selection.main.head, state.modified.state.selection.main.head],
-      scrollsBefore: scrolls,
-      scrollsAfter: [state.original.scrollDOM.scrollTop, state.modified.scrollDOM.scrollTop],
+      anchorsBefore,
+      anchorsAfter,
       labels: [...document.querySelectorAll('.comparison-label')].map(element => element.textContent),
     }
   })
-  check('比較対象変更で view・選択・スクロールを保存する',
+  check('比較対象変更で view・選択・source anchor の viewport 相対位置を保存する',
     targetChange.identities && JSON.stringify(targetChange.selectionsBefore) === JSON.stringify(targetChange.selectionsAfter) &&
-    targetChange.scrollsAfter.every((value, index) => Math.abs(value - targetChange.scrollsBefore[index]) < 2) &&
+    targetChange.anchorsBefore.every((anchor, index) =>
+      anchor && targetChange.anchorsAfter[index] && anchor.number === targetChange.anchorsAfter[index].number &&
+      Math.abs(anchor.relativeTop - targetChange.anchorsAfter[index].relativeTop) < 2) &&
     targetChange.labels.join('|') === 'HEAD~1|Working Tree', JSON.stringify(targetChange))
 
   const readOnly = await page.evaluate(() => ({

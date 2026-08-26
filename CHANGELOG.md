@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.39
+
+- Preserves the visible source position while render and rich presentation heights change
+- Wraps prose and inline code within the editor width while code blocks, tables, and display math retain local scrolling
+- Reloads the current file content when the same URI is opened again
+- Reveals distant search targets across the document
+
 ## 0.0.38
 
 - Uses the current file content when a clean editor backup predates an external update

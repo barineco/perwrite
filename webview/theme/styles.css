@@ -169,11 +169,16 @@ body.comparing .comparison-targets {
   line-height: inherit;
   padding: 0;
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .cm-editor .cm-line {
   padding: 0;
   line-height: inherit;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .cm-editor.cm-focused {
@@ -202,6 +207,9 @@ body.comparing .comparison-targets {
   background: var(--perwrite-codeblock-background);
   padding: 2px 4px;
   border-radius: 3px;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 .cm-comparison-removed .cm-inline-code {
